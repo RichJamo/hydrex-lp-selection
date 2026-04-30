@@ -22,6 +22,10 @@
         {
           "pair": "USDC/ZEN",
           "pool_address": "0x415233bf9b9156d4f777d580e67c0a4e398a84c3"
+        },
+        {
+          "pair": "cbMEGA/WETH",
+          "pool_address": "0x5bc54e33cfb988bfe5e578ef69c41d357c318bde"
         }
       ]
     }
