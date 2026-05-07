@@ -1,5 +1,5 @@
 {
-  "_comment": "Hydrex Bootstrap LP Tracker. Austin picks 2 pools each Sunday for the upcoming Thu→Wed epoch. Each Wed 23:59 UTC the weekly_bootstrap_update.py task pulls metrics and appends to bootstrap_tracker.csv + regenerates bootstrap.html.",
+  "_comment": "Hydrex Bootstrap LP Tracker. Austin picks 2+ pools each Sunday for the upcoming Thu→Wed epoch. Each Wed 23:59 UTC the weekly_bootstrap_update.py task pulls metrics for weeks[-1], appends to bootstrap_tracker.csv, regenerates bootstrap.html. Pools added stay in rotation until Austin says stop.",
   "_data_sources": {
     "pool_metrics": "https://staging.api.hydrex.fi/stats/clamm-pool-epoch-data/{hydrex_epoch}",
     "incentive_campaigns": "https://incentives-api.hydrex.fi/campaigns",
@@ -26,6 +26,60 @@
         {
           "pair": "cbMEGA/WETH",
           "pool_address": "0x5bc54e33cfb988bfe5e578ef69c41d357c318bde"
+        }
+      ]
+    },
+    {
+      "hydrex_epoch": 34,
+      "aero_epoch": 141,
+      "epoch_start": "2026-05-07",
+      "epoch_end": "2026-05-14",
+      "report_date_utc": "2026-05-13T23:59:00Z",
+      "pools": [
+        {
+          "pair": "USDC/VVV",
+          "pool_address": "0x02107bab40bba06ae979a15f67b5ad3853c5e116"
+        },
+        {
+          "pair": "USDC/ZEN",
+          "pool_address": "0x415233bf9b9156d4f777d580e67c0a4e398a84c3"
+        },
+        {
+          "pair": "cbMEGA/WETH",
+          "pool_address": "0x5bc54e33cfb988bfe5e578ef69c41d357c318bde"
+        }
+      ]
+    },
+    {
+      "hydrex_epoch": 35,
+      "aero_epoch": 142,
+      "epoch_start": "2026-05-14",
+      "epoch_end": "2026-05-21",
+      "report_date_utc": "2026-05-20T23:59:00Z",
+      "pools": [
+        {
+          "pair": "USDC/VVV",
+          "pool_address": "0x02107bab40bba06ae979a15f67b5ad3853c5e116"
+        },
+        {
+          "pair": "USDC/ZEN",
+          "pool_address": "0x415233bf9b9156d4f777d580e67c0a4e398a84c3"
+        },
+        {
+          "pair": "cbMEGA/WETH",
+          "pool_address": "0x5bc54e33cfb988bfe5e578ef69c41d357c318bde"
+        },
+        {
+          "pair": "WETH/VVV",
+          "pool_address": "0x91e14424693093c2c8ddaa36a3beaef143f1a2bf"
+        },
+        {
+          "pair": "WETH/CHECK",
+          "pool_address": "0x567b69f72c0a2689c9be0cfba576af3caa896cb2"
+        },
+        {
+          "pair": "WETH/NOCK",
+          "pool_address": "0x467a8846e7b54eac5d4d1cb2fdc9b8752212ff0e"
         }
       ]
     }
