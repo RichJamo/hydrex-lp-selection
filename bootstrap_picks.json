@@ -80,6 +80,14 @@
         {
           "pair": "WETH/NOCK",
           "pool_address": "0x467a8846e7b54eac5d4d1cb2fdc9b8752212ff0e"
+        },
+        {
+          "pair": "SOSO/USDC",
+          "pool_address": "0x17ed8b5358ad5dbf6ef5f07cf5e398ea40579116"
+        },
+        {
+          "pair": "MAG7.ssi/USDC",
+          "pool_address": "0x88eaaa53405a6bf098bc38827f4642bcfd195256"
         }
       ]
     }
