@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Hydrex × ICHI — LP Position Diagnostic</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --border: #262a33;
+      --text: #e7ecf2;
+      --muted: #9aa4b2;
+      --accent: #4ea8ff;
+      --red: #ff5c5c;
+      --green: #10b981;
+      --royal: #6f8aff;
+      --amber: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    h1 { margin: 0 0 6px; font-size: 22px; }
+    .subtitle { color: var(--muted); margin-bottom: 18px; font-size: 13px; }
+    a { color: var(--accent); }
+    .topbar { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 22px; flex-wrap: wrap; gap: 12px; }
+    .topbar-meta { color: var(--muted); font-size: 12px; text-align: right; }
+    .refresh { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+    .refresh:hover { border-color: var(--accent); }
+    .refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+    .legend { display: flex; flex-wrap: wrap; gap: 16px; padding: 14px 18px; margin-bottom: 22px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; font-size: 13px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; }
+    .swatch { width: 20px; height: 12px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.1); }
+    .swatch.strat1-active { background: #6f8aff; }
+    .swatch.strat1-stash { background: rgba(111,138,255,0.4); }
+    .swatch.strat2-active { background: #f59e0b; }
+    .swatch.strat2-stash { background: rgba(245,158,11,0.4); }
+    .swatch.manual { background: rgba(16,185,129,0.65); }
+    .swatch.current { background: var(--red); width: 4px; height: 16px; }
+    .pool { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+    .pool-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; flex-wrap: wrap; gap: 8px; }
+    .pool-title { font-size: 18px; font-weight: 700; }
+    .pool-stats { font-size: 13px; color: var(--muted); }
+    .pool-address { font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); margin-top: 2px; word-break: break-all; }
+    .chart { margin-top: 12px; min-height: 460px; }
+    .loading { color: var(--muted); padding: 60px 20px; text-align: center; font-size: 14px; }
+    .error { color: var(--red); padding: 20px; background: rgba(255,92,92,0.08); border-radius: 6px; margin: 12px 0; }
+    .status { font-size: 12px; color: var(--muted); }
+    .status.ok { color: var(--green); }
+    .status.warn { color: var(--amber); }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div>
+      <h1>Hydrex × ICHI — LP Position Diagnostic</h1>
+      <p class="subtitle">Live liquidity profile across 4 ICHI-managed pools on Base. Each ICHI strategy's L decomposed into active vs stash via Uniswap V3 math.</p>
+    </div>
+    <div class="topbar-meta">
+      <button class="refresh" id="refresh-btn" onclick="refreshAll()">↻ Refresh</button>
+      <div id="last-updated" style="margin-top:6px"></div>
+      <div style="margin-top:2px"><a href="index.html">← Pool Efficiency</a> &nbsp;|&nbsp; <a href="bootstrap.html">Bootstrap Tracker</a></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><div class="swatch strat1-active"></div><span><strong>Strategy 1 active</strong> (larger TVL vault)</span></div>
+    <div class="legend-item"><div class="swatch strat1-stash"></div><span>Strategy 1 stash</span></div>
+    <div class="legend-item"><div class="swatch strat2-active"></div><span><strong>Strategy 2 active</strong> (smaller vault)</span></div>
+    <div class="legend-item"><div class="swatch strat2-stash"></div><span>Strategy 2 stash</span></div>
+    <div class="legend-item"><div class="swatch manual"></div><span><strong>Manual LP</strong></span></div>
+    <div class="legend-item"><div class="swatch current"></div><span><strong>Current price</strong></span></div>
+  </div>
+
+  <div id="pools-container"></div>
+
+<script>
+const POOLS = [
+  { pair: "WETH/cbBTC", addr: "0x3f9b863ef4b295d6ba370215bcca3785fcc44f44", dec0: 18, dec1: 8, invertPrice: true,  priceUnit: "WETH per BTC", pricePrefix: "" },
+  { pair: "WETH/USDC",  addr: "0x82dbe18346a8656dbb5e76f74bf3ae279cc16b29", dec0: 18, dec1: 6, invertPrice: false, priceUnit: "USDC per WETH", pricePrefix: "$" },
+  { pair: "USDC/cbBTC", addr: "0x0ba69825c4c033e72309f6ac0bde0023b15cc97c", dec0: 6,  dec1: 8, invertPrice: true,  priceUnit: "USDC per BTC", pricePrefix: "$" },
+  { pair: "WETH/EURC",  addr: "0xb20f018dde5a6fe7f93c31da05a5da9efbc52772", dec0: 18, dec1: 6, invertPrice: false, priceUnit: "EURC per WETH", pricePrefix: "€" },
+];
+
+const STRAT_COLORS = [
+  { active: "rgba(111,138,255,1)",  stash: "rgba(111,138,255,0.4)" },  // royal
+  { active: "rgba(245,158,11,1)",   stash: "rgba(245,158,11,0.4)" },   // amber
+];
+const MANUAL_COLOR = "rgba(16,185,129,0.55)";
+const CURRENT_COLOR = "#ff5c5c";
+
+// --- Math helpers ---
+function tickToHumanPrice(t, p) {
+  const raw = Math.pow(1.0001, t);
+  const adj = raw * Math.pow(10, p.dec0 - p.dec1);
+  return p.invertPrice ? 1 / adj : adj;
+}
+function fmtPrice(p, pool) {
+  if (!isFinite(p)) return "—";
+  if (p > 10000) return pool.pricePrefix + p.toLocaleString(undefined, {maximumFractionDigits: 0});
+  if (p > 100)   return pool.pricePrefix + p.toLocaleString(undefined, {maximumFractionDigits: 1});
+  if (p > 1)     return pool.pricePrefix + p.toFixed(2);
+  return pool.pricePrefix + p.toFixed(4);
+}
+function parseParentIds(s) {
+  if (!s) return [];
+  return s.split(",").map(seg => {
+    const parts = seg.split("#");
+    if (parts.length < 4) return null;
+    const tl = parseInt(parts[parts.length-2]);
+    const th = parseInt(parts[parts.length-1]);
+    if (isNaN(tl) || isNaN(th)) return null;
+    return [tl, th];
+  }).filter(x => x);
+}
+
+// V3 amount from L for a position [tl, th] at current tick t_cur
+function amountsFromL(L, tl, th, tCur) {
+  const sqrtPa = Math.pow(1.0001, tl / 2);
+  const sqrtPb = Math.pow(1.0001, th / 2);
+  const sqrtP  = Math.pow(1.0001, tCur / 2);
+  if (tCur < tl) {
+    return [L * (sqrtPb - sqrtPa) / (sqrtPa * sqrtPb), 0];
+  } else if (tCur > th) {
+    return [0, L * (sqrtPb - sqrtPa)];
+  } else {
+    return [L * (sqrtPb - sqrtP) / (sqrtP * sqrtPb), L * (sqrtP - sqrtPa)];
+  }
+}
+
+// Solve 2-variable linear system: [a0*La + s0*Ls, a1*La + s1*Ls] = [amt0_raw, amt1_raw]
+function decomposeVault(activeRange, stashRange, amt0Raw, amt1Raw, tCur) {
+  const ac = activeRange ? amountsFromL(1.0, activeRange[0], activeRange[1], tCur) : [0, 0];
+  const sc = stashRange  ? amountsFromL(1.0, stashRange[0],  stashRange[1],  tCur) : [0, 0];
+  const det = ac[0] * sc[1] - ac[1] * sc[0];
+  let La = 0, Ls = 0;
+  if (Math.abs(det) > 1e-12) {
+    La = (amt0Raw * sc[1] - amt1Raw * sc[0]) / det;
+    Ls = (ac[0] * amt1Raw - ac[1] * amt0Raw) / det;
+  } else {
+    // Singular: solve by token availability
+    if (sc[1] > 1e-9) Ls = amt1Raw / sc[1];
+    else if (ac[1] > 1e-9) La = amt1Raw / ac[1];
+    const rem0 = amt0Raw - La * ac[0] - Ls * sc[0];
+    if (ac[0] > 1e-9 && rem0 > 0) La += rem0 / ac[0];
+    else if (sc[0] > 1e-9 && rem0 > 0) Ls += rem0 / sc[0];
+  }
+  return [Math.max(0, La), Math.max(0, Ls)];
+}
+
+// --- Fetch + render per pool ---
+async function fetchPool(addr) {
+  const r = await fetch(`https://liquidity.api.hydrex.fi/positions/pool/${addr}`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return await r.json();
+}
+
+function processPool(data, pool) {
+  const p = data.pool;
+  const curTick = parseInt(p.tick);
+  const totalTvl = parseFloat(p.totalValueLockedUSD);
+  const ichiPositions = data.positions.filter(pp => pp.isIchiVaultPosition);
+  const manualPositions = data.positions.filter(pp => !pp.isIchiVaultPosition);
+  const ichiTvl = ichiPositions.reduce((s, pp) => s + parseFloat(pp.valuesUSD.total || 0), 0);
+  const manualTvl = manualPositions.reduce((s, pp) => s + parseFloat(pp.valuesUSD.total || 0), 0);
+
+  // Aggregate per ICHI vault
+  const byVault = {};
+  for (const pp of ichiPositions) {
+    const va = pp.id.split(":")[1].toLowerCase();
+    if (!byVault[va]) byVault[va] = { amt0Raw: 0, amt1Raw: 0, tvl: 0, parents: new Set(), depositToken: null };
+    byVault[va].amt0Raw += parseFloat(pp.amounts.token0 || 0) * Math.pow(10, pool.dec0);
+    byVault[va].amt1Raw += parseFloat(pp.amounts.token1 || 0) * Math.pow(10, pool.dec1);
+    byVault[va].tvl     += parseFloat(pp.valuesUSD.total || 0);
+    for (const [tl, th] of parseParentIds(pp.ichiVault && pp.ichiVault.parentPositionId)) {
+      byVault[va].parents.add(`${tl}|${th}`);
+    }
+  }
+  // Decompose each vault
+  const vaults = [];
+  for (const [va, info] of Object.entries(byVault)) {
+    if (info.tvl < 1) continue;
+    const ranges = [...info.parents].map(s => s.split("|").map(Number)).sort((a, b) => (a[1]-a[0]) - (b[1]-b[0]));
+    if (!ranges.length) continue;
+    const activeRange = ranges[0];
+    const stashRange = ranges.length > 1 ? ranges[ranges.length-1] : null;
+    const [La, Ls] = decomposeVault(activeRange, stashRange, info.amt0Raw, info.amt1Raw, curTick);
+    // Identify deposit token from amounts heuristic (the vault holds mostly its deposit token in stash)
+    vaults.push({ address: va, tvl: info.tvl, activeRange, stashRange, Lactive: La, Lstash: Ls });
+  }
+  vaults.sort((a, b) => b.tvl - a.tvl);
+
+  // Manual positions with L
+  const manual = manualPositions.map(pp => {
+    const r = pp.range;
+    if (!r || r.tickLower === undefined) return null;
+    const tvl = parseFloat(pp.valuesUSD.total || 0);
+    if (tvl < 100) return null;
+    return { tl: r.tickLower, th: r.tickUpper, L: parseFloat(pp.liquidity), tvl };
+  }).filter(x => x);
+
+  return { p, curTick, totalTvl, ichiTvl, manualTvl, vaults, manual,
+           t0: p.token0.symbol, t1: p.token1.symbol };
+}
+
+function buildPlot(divId, pool, processed) {
+  const { curTick, totalTvl, ichiTvl, manualTvl, vaults, manual, t0, t1 } = processed;
+
+  // X-axis window: tight zoom around active ranges
+  let activeTicks = [];
+  for (const v of vaults) {
+    if (v.activeRange && Math.abs(v.activeRange[0]) < 880000 && Math.abs(v.activeRange[1]) < 880000) {
+      activeTicks.push(v.activeRange[0], v.activeRange[1]);
+    }
+  }
+  let aMin, aMax;
+  if (activeTicks.length) { aMin = Math.min(...activeTicks); aMax = Math.max(...activeTicks); }
+  else { aMin = curTick - 2000; aMax = curTick + 2000; }
+  const aSpan = Math.max(aMax - aMin, 1500);
+  const pad = Math.max(1500, Math.round(aSpan * 0.30));
+  const xLo = Math.min(aMin - pad, curTick - 800);
+  const xHi = Math.max(aMax + pad, curTick + 800);
+
+  // Sample ticks across window
+  const N = 800;
+  const ticks = Array.from({length: N}, (_, i) => xLo + (xHi - xLo) * i / (N - 1));
+  const Lm = new Array(N).fill(0);
+  const LstratActive = vaults.map(() => new Array(N).fill(0));
+  const LstratStash  = vaults.map(() => new Array(N).fill(0));
+  for (let i = 0; i < N; i++) {
+    const t = ticks[i];
+    for (const m of manual) if (t >= m.tl && t <= m.th) Lm[i] += m.L;
+    for (let vi = 0; vi < vaults.length; vi++) {
+      const v = vaults[vi];
+      if (v.activeRange && t >= v.activeRange[0] && t <= v.activeRange[1]) LstratActive[vi][i] += v.Lactive;
+      if (v.stashRange  && t >= v.stashRange[0]  && t <= v.stashRange[1])  LstratStash[vi][i]  += v.Lstash;
+    }
+  }
+  // Scale L for display (divide by 1e15 to get readable numbers — works for most pools; USDC/cbBTC uses smaller scale)
+  // Choose scale per-pool based on max L
+  const maxL = Math.max(
+    ...Lm, ...LstratActive.flat(), ...LstratStash.flat(), 1
+  );
+  const scale = Math.pow(10, Math.floor(Math.log10(maxL)) - 1);  // keep top value around 10
+  const Lm_s = Lm.map(x => x / scale);
+  const Lsa_s = LstratActive.map(arr => arr.map(x => x / scale));
+  const Lss_s = LstratStash.map(arr => arr.map(x => x / scale));
+  const Ltotal_s = Lm_s.map((_, i) => Lm_s[i] + Lsa_s.reduce((s, arr) => s + arr[i], 0) + Lss_s.reduce((s, arr) => s + arr[i], 0));
+
+  // Build traces using stackgroup
+  const traces = [];
+  traces.push({
+    x: ticks, y: Lm_s, mode: "lines", line: {width: 0},
+    stackgroup: "liq", fillcolor: MANUAL_COLOR, name: "Manual",
+    hovertemplate: "Manual L: %{y:.3f}<extra></extra>",
+  });
+  for (let i = 0; i < vaults.length && i < STRAT_COLORS.length; i++) {
+    const v = vaults[i], col = STRAT_COLORS[i];
+    const dep = depositTokenFor(v, t0, t1);
+    traces.push({
+      x: ticks, y: Lss_s[i], mode: "lines", line: {width: 0},
+      stackgroup: "liq", fillcolor: col.stash, name: `Strat ${i+1} stash (${dep}-in)`,
+      hovertemplate: `Strat ${i+1} stash L: %{y:.3f}<extra></extra>`,
+    });
+    traces.push({
+      x: ticks, y: Lsa_s[i], mode: "lines", line: {width: 0},
+      stackgroup: "liq", fillcolor: col.active, name: `<b>Strat ${i+1} active (${dep}-in)</b>`,
+      hovertemplate: `<b>Strat ${i+1} active L: %{y:.3f}</b><extra></extra>`,
+    });
+  }
+  traces.push({
+    x: ticks, y: Ltotal_s, mode: "lines",
+    line: {width: 2.5, color: "#e7ecf2"},
+    name: "Total density (all on)",
+    hovertemplate: "<b>Total L:</b> %{y:.3f}<extra></extra>",
+  });
+
+  const ymax = Math.max(...Ltotal_s) * 1.15 || 1;
+  const nTicks = 7;
+  const xTickVals = Array.from({length: nTicks}, (_, i) => xLo + (xHi - xLo) * i / (nTicks - 1));
+  const xTickText = xTickVals.map(t => fmtPrice(tickToHumanPrice(t, pool), pool));
+
+  const layout = {
+    margin: {l: 70, r: 30, t: 24, b: 60},
+    paper_bgcolor: "#171a21",
+    plot_bgcolor: "#171a21",
+    font: {color: "#e7ecf2", family: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif"},
+    xaxis: {
+      range: [xLo, xHi],
+      tickvals: xTickVals, ticktext: xTickText,
+      title: {text: `Price (${pool.priceUnit})`, font: {size: 12, color: "#9aa4b2"}},
+      gridcolor: "rgba(255,255,255,0.04)", zerolinecolor: "rgba(255,255,255,0.08)",
+      color: "#9aa4b2",
+    },
+    yaxis: {
+      title: {text: `Liquidity density (L × 10⁻${Math.floor(Math.log10(scale))}, stacked)`, font: {size: 11, color: "#9aa4b2"}},
+      gridcolor: "rgba(255,255,255,0.04)", zerolinecolor: "rgba(255,255,255,0.08)",
+      color: "#9aa4b2", rangemode: "tozero",
+    },
+    shapes: [
+      {type: "line", x0: curTick, x1: curTick, y0: 0, y1: ymax,
+       line: {color: CURRENT_COLOR, width: 2.5}},
+    ],
+    hovermode: "closest",
+    showlegend: true,
+    legend: {orientation: "h", x: 0.5, xanchor: "center", y: -0.18, font: {size: 11, color: "#e7ecf2"}, bgcolor: "rgba(0,0,0,0)"},
+  };
+
+  Plotly.newPlot(divId, traces, layout, {displayModeBar: false, responsive: true});
+}
+
+// Guess deposit token from vault amounts (the side it holds more of in stash)
+function depositTokenFor(vault, t0, t1) {
+  if (!vault.stashRange) return "?";
+  // Approximate: if stash is below current it holds mostly token1, else token0
+  // But we don't have current tick here; instead use the orientation of stash relative to active
+  if (vault.stashRange[0] < vault.activeRange[0]) return t1;
+  return t0;
+}
+
+async function loadPool(pool) {
+  const containerId = `pool-${pool.pair.replace("/", "-")}`;
+  const chartId = `chart-${pool.pair.replace("/", "-")}`;
+  const statusEl = document.getElementById(`status-${pool.pair.replace("/", "-")}`);
+  try {
+    statusEl.textContent = "loading…";
+    statusEl.className = "status";
+    const data = await fetchPool(pool.addr);
+    const processed = processPool(data, pool);
+    // Update header stats
+    document.getElementById(`stats-${pool.pair.replace("/", "-")}`).innerHTML =
+      `Pool TVL <strong>$${(processed.totalTvl/1000).toFixed(0)}K</strong>` +
+      ` &nbsp;|&nbsp; ICHI <strong>${(processed.ichiTvl/processed.totalTvl*100).toFixed(0)}%</strong>` +
+      ` / Manual <strong>${(processed.manualTvl/processed.totalTvl*100).toFixed(0)}%</strong>` +
+      ` &nbsp;|&nbsp; ${data.totalPositions} positions (${data.inRangePositions} in-range)`;
+    buildPlot(chartId, pool, processed);
+    statusEl.textContent = "live";
+    statusEl.className = "status ok";
+  } catch (e) {
+    statusEl.textContent = `error: ${e.message}`;
+    statusEl.className = "status warn";
+    document.getElementById(chartId).innerHTML =
+      `<div class="error">Could not load pool ${pool.pair}: ${e.message}</div>`;
+  }
+}
+
+function buildLayout() {
+  const container = document.getElementById("pools-container");
+  container.innerHTML = "";
+  for (const pool of POOLS) {
+    const slug = pool.pair.replace("/", "-");
+    const div = document.createElement("div");
+    div.className = "pool";
+    div.innerHTML = `
+      <div class="pool-header">
+        <div>
+          <div class="pool-title">${pool.pair} <span class="status" id="status-${slug}" style="margin-left:8px"></span></div>
+          <div class="pool-stats" id="stats-${slug}">—</div>
+          <div class="pool-address">${pool.addr}</div>
+        </div>
+      </div>
+      <div class="chart" id="chart-${slug}"><div class="loading">loading…</div></div>
+    `;
+    container.appendChild(div);
+  }
+}
+
+async function refreshAll() {
+  const btn = document.getElementById("refresh-btn");
+  btn.disabled = true;
+  document.getElementById("last-updated").textContent = "refreshing…";
+  await Promise.all(POOLS.map(loadPool));
+  const now = new Date();
+  document.getElementById("last-updated").textContent = `last updated ${now.toLocaleTimeString()}`;
+  btn.disabled = false;
+}
+
+// Init
+buildLayout();
+refreshAll();
+</script>
+</body>
+</html>
