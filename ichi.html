@@ -217,12 +217,25 @@ function buildPlot(divId, pool, processed) {
   else { aMin = curTick - 2000; aMax = curTick + 2000; }
   const aSpan = Math.max(aMax - aMin, 1500);
   const pad = Math.max(1500, Math.round(aSpan * 0.30));
+  // Initial view: tight zoom around active ranges
   const xLo = Math.min(aMin - pad, curTick - 800);
   const xHi = Math.max(aMax + pad, curTick + 800);
 
-  // Sample ticks across window
-  const N = 800;
-  const ticks = Array.from({length: N}, (_, i) => xLo + (xHi - xLo) * i / (N - 1));
+  // Sample window: extend WAY wider so zoom-out reveals manual positions + stash tails.
+  // Include all manual + stash bounds, clamped to a sane V3 tick range.
+  let allTl = [], allTh = [];
+  for (const m of manual) { allTl.push(m.tl); allTh.push(m.th); }
+  for (const v of vaults) {
+    if (v.activeRange) { allTl.push(v.activeRange[0]); allTh.push(v.activeRange[1]); }
+    if (v.stashRange)  { allTl.push(v.stashRange[0]);  allTh.push(v.stashRange[1]); }
+  }
+  const TICK_CLAMP = 30000;  // ~price 0.05x to 20x current — plenty of zoom-out room
+  const sLo = Math.max(Math.min(xLo, ...allTl), curTick - TICK_CLAMP);
+  const sHi = Math.min(Math.max(xHi, ...allTh), curTick + TICK_CLAMP);
+
+  // Sample ticks across the wide window
+  const N = 1600;
+  const ticks = Array.from({length: N}, (_, i) => sLo + (sHi - sLo) * i / (N - 1));
   const Lm = new Array(N).fill(0);
   const LstratActive = vaults.map(() => new Array(N).fill(0));
   const LstratStash  = vaults.map(() => new Array(N).fill(0));
