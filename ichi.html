@@ -305,7 +305,13 @@ function buildPlot(divId, pool, processed) {
     legend: {orientation: "h", x: 0.5, xanchor: "center", y: -0.18, font: {size: 11, color: "#e7ecf2"}, bgcolor: "rgba(0,0,0,0)"},
   };
 
-  Plotly.newPlot(divId, traces, layout, {displayModeBar: false, responsive: true});
+  Plotly.newPlot(divId, traces, layout, {
+    displayModeBar: true,
+    scrollZoom: true,
+    responsive: true,
+    displaylogo: false,
+    modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+  });
 }
 
 // Guess deposit token from vault amounts (the side it holds more of in stash)
