@@ -167,10 +167,12 @@ function processPool(data, pool) {
   const byVault = {};
   for (const pp of ichiPositions) {
     const va = pp.id.split(":")[1].toLowerCase();
-    if (!byVault[va]) byVault[va] = { amt0Raw: 0, amt1Raw: 0, tvl: 0, parents: new Set(), depositToken: null };
+    if (!byVault[va]) byVault[va] = { amt0Raw: 0, amt1Raw: 0, tvl: 0, usd0: 0, usd1: 0, parents: new Set() };
     byVault[va].amt0Raw += parseFloat(pp.amounts.token0 || 0) * Math.pow(10, pool.dec0);
     byVault[va].amt1Raw += parseFloat(pp.amounts.token1 || 0) * Math.pow(10, pool.dec1);
     byVault[va].tvl     += parseFloat(pp.valuesUSD.total || 0);
+    byVault[va].usd0    += parseFloat(pp.valuesUSD.token0 || 0);
+    byVault[va].usd1    += parseFloat(pp.valuesUSD.token1 || 0);
     for (const [tl, th] of parseParentIds(pp.ichiVault && pp.ichiVault.parentPositionId)) {
       byVault[va].parents.add(`${tl}|${th}`);
     }
@@ -184,8 +186,9 @@ function processPool(data, pool) {
     const activeRange = ranges[0];
     const stashRange = ranges.length > 1 ? ranges[ranges.length-1] : null;
     const [La, Ls] = decomposeVault(activeRange, stashRange, info.amt0Raw, info.amt1Raw, curTick);
-    // Identify deposit token from amounts heuristic (the vault holds mostly its deposit token in stash)
-    vaults.push({ address: va, tvl: info.tvl, activeRange, stashRange, Lactive: La, Lstash: Ls });
+    // Deposit token: whichever side holds more USD value (cleaner than the stash-position heuristic)
+    const depositToken = info.usd0 > info.usd1 ? "token0" : "token1";
+    vaults.push({ address: va, tvl: info.tvl, activeRange, stashRange, Lactive: La, Lstash: Ls, depositToken });
   }
   vaults.sort((a, b) => b.tvl - a.tvl);
 
@@ -327,11 +330,12 @@ function buildPlot(divId, pool, processed) {
   });
 }
 
-// Guess deposit token from vault amounts (the side it holds more of in stash)
+// Deposit token: now stored on the vault object from USD-weight check
 function depositTokenFor(vault, t0, t1) {
+  if (vault.depositToken === "token0") return t0;
+  if (vault.depositToken === "token1") return t1;
+  // Fallback to old heuristic
   if (!vault.stashRange) return "?";
-  // Approximate: if stash is below current it holds mostly token1, else token0
-  // But we don't have current tick here; instead use the orientation of stash relative to active
   if (vault.stashRange[0] < vault.activeRange[0]) return t1;
   return t0;
 }
