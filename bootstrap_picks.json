@@ -70,10 +70,6 @@
           "pool_address": "0x5bc54e33cfb988bfe5e578ef69c41d357c318bde"
         },
         {
-          "pair": "WETH/VVV",
-          "pool_address": "0x91e14424693093c2c8ddaa36a3beaef143f1a2bf"
-        },
-        {
           "pair": "WETH/CHECK",
           "pool_address": "0x567b69f72c0a2689c9be0cfba576af3caa896cb2"
         },
@@ -88,6 +84,14 @@
         {
           "pair": "MAG7.ssi/USDC",
           "pool_address": "0x88eaaa53405a6bf098bc38827f4642bcfd195256"
+        },
+        {
+          "pair": "LFI/USDC",
+          "pool_address": "0x53ab4c60ff04b782f630a8685af95404f099aafd"
+        },
+        {
+          "pair": "deSPXA/USDC",
+          "pool_address": "0xa3c25d3f65e11008465f477665cf2303a420cfb2"
         }
       ]
     }
