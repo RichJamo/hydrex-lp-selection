@@ -490,6 +490,89 @@ setupTabs();
     DASHBOARD_HTML.write_text(html)
 
 
+def select_week_to_measure(weeks: list) -> dict:
+    """Pick the week whose epoch is CLOSING at script time.
+
+    Designed to run Wed 23:59 UTC just before epoch flip. Returns the week
+    containing 'now'. Falls back gracefully if no exact match:
+      - if 'now' is before any week: error (no data yet)
+      - if 'now' is after all weeks: most recent week
+      - allows up to 24h grace after epoch_end so late-running cron still
+        measures the just-closed epoch instead of the upcoming one.
+
+    Critical: do NOT default to weeks[-1] — Austin adds upcoming epochs to
+    the picks file BEFORE the cron runs, so weeks[-1] is the NEXT epoch
+    (with no data yet), not the one we want to measure.
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+    GRACE = dt.timedelta(hours=24)
+
+    for w in weeks:
+        start = dt.datetime.fromisoformat(w["epoch_start"] + "T00:00:00+00:00")
+        end   = dt.datetime.fromisoformat(w["epoch_end"]   + "T00:00:00+00:00")
+        # Window: from start, through end + 24h grace
+        if start <= now < end + GRACE:
+            return w
+
+    # If we're past every configured week, measure the most recent one
+    weeks_sorted = sorted(weeks, key=lambda w: w["epoch_start"])
+    if now >= dt.datetime.fromisoformat(weeks_sorted[-1]["epoch_end"] + "T00:00:00+00:00"):
+        return weeks_sorted[-1]
+
+    # 'now' is before any configured week — nothing to measure
+    raise RuntimeError(
+        f"No bootstrap week covers current time {now.isoformat()}. "
+        f"Earliest configured: {weeks_sorted[0]['epoch_start']}"
+    )
+
+
+def row_already_recorded(hydrex_epoch: int, pool_address: str) -> bool:
+    """Check if tracker already has this (epoch, pool) row with non-stub data."""
+    if not TRACKER_CSV.exists():
+        return False
+    with open(TRACKER_CSV, newline="") as f:
+        for r in csv.DictReader(f):
+            if (int(r.get("hydrex_epoch") or 0) == hydrex_epoch
+                and (r.get("pool_address") or "").lower() == pool_address.lower()):
+                # Only treat as recorded if it has real volume/TVL (not a 0-stub)
+                try:
+                    if float(r.get("volume_usd") or 0) > 0 or float(r.get("tvl_avg_usd") or 0) > 0:
+                        return True
+                except ValueError:
+                    pass
+    return False
+
+
+def purge_stub_rows_for_epoch(hydrex_epoch: int) -> int:
+    """Remove any zero-stub rows for the given epoch so they get re-recorded with real data.
+    A stub row is one with volume_usd == 0 AND tvl_avg_usd == 0. Returns rows removed."""
+    if not TRACKER_CSV.exists():
+        return 0
+    with open(TRACKER_CSV, newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames
+        rows = list(reader)
+    keep = []
+    removed = 0
+    for r in rows:
+        if int(r.get("hydrex_epoch") or 0) == hydrex_epoch:
+            try:
+                vol = float(r.get("volume_usd") or 0)
+                tvl = float(r.get("tvl_avg_usd") or 0)
+                if vol == 0 and tvl == 0:
+                    removed += 1
+                    continue
+            except ValueError:
+                pass
+        keep.append(r)
+    if removed:
+        with open(TRACKER_CSV, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader()
+            w.writerows(keep)
+    return removed
+
+
 def main():
     picks = json.loads(PICKS_FILE.read_text())
     weeks = picks.get("weeks", [])
@@ -497,8 +580,8 @@ def main():
         print("No bootstrap weeks configured", file=sys.stderr)
         sys.exit(1)
 
-    # Process the latest week
-    week = weeks[-1]
+    # Select the CLOSING epoch — not weeks[-1], which is typically the upcoming one
+    week = select_week_to_measure(weeks)
     hydrex_epoch = week["hydrex_epoch"]
     aero_epoch = week.get("aero_epoch", hydrex_epoch + 107)
     epoch_start = week["epoch_start"] + "T00:00:00Z"
@@ -507,6 +590,11 @@ def main():
 
     print(f"Bootstrap update: Hydrex epoch {hydrex_epoch} ({week['epoch_start']} → {week['epoch_end']})")
     print(f"Pools: {len(pools)}")
+
+    # Clear any zero-stub rows from earlier botched runs of this epoch
+    purged = purge_stub_rows_for_epoch(hydrex_epoch)
+    if purged:
+        print(f"Purged {purged} stub row(s) for epoch {hydrex_epoch} — will re-record with real data")
 
     # Fetch heavy endpoints ONCE, reuse across all pools (was 2N+1 calls, now exactly 3)
     print("\nFetching APIs (3 calls total, regardless of pool count)...")
@@ -522,6 +610,9 @@ def main():
         # Pool address is the canonical key — pair name is just a display label
         # and gets auto-derived from epoch data or subgraph
         addr = pool["pool_address"]
+        if row_already_recorded(hydrex_epoch, addr):
+            print(f"\n  Skipping {addr} — already recorded for epoch {hydrex_epoch}")
+            continue
         print(f"\n  Processing {addr}...")
         m = compute_metrics(addr, epoch_pools, campaigns, epoch_start, epoch_end, hydx_price)
         # Display pair: prefer config label, fallback to derived title
