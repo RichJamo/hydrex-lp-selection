@@ -66,9 +66,10 @@
       <strong>Y-cap</strong>
       <select id="ycap">
         <option value="0" selected>Auto (no cap)</option>
-        <option value="300">300%</option>
-        <option value="500">500%</option>
-        <option value="1000">1000%</option>
+        <option value="300">Hide >300%</option>
+        <option value="500">Hide >500%</option>
+        <option value="1000">Hide >1000%</option>
+        <option value="2500">Hide >2500%</option>
       </select>
     </div>
     <div class="control-group" id="smooth-group">
@@ -158,9 +159,10 @@ function renderAll() {
     `;
     container.appendChild(panel);
 
-    // Apply y cap
+    // Y-cap behaviour: HIDE values above cap (set to null), don't clamp.
+    // Clamping creates a misleading flat line at the cap value.
     const cap = ycap > 0 ? ycap : Infinity;
-    const clamp = arr => arr.map(v => v === null || isNaN(v) ? null : (v > cap ? cap : v));
+    const clamp = arr => arr.map(v => v === null || isNaN(v) ? null : (v > cap ? null : v));
 
     // Marker symbols: hollow for partial epochs
     function markers(arr, color) {
