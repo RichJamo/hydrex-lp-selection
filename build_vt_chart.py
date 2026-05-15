@@ -390,8 +390,9 @@ function renderAll() {{
       }};
     }}
 
-    const unit = is_fv ? '%' : '%';
-    const valFmt = is_fv ? '.4f' : '.1f';
+    const unit = '%';
+    // Hover precision: V/T values are large (1-1000%+), F/T are small (<5%), F/V smaller
+    const valFmt = metric === 'fv' ? '.4f' : metric === 'ft' ? '.3f' : '.1f';
     const yTitle = metric === 'vt' ? (view === 'epoch' ? 'V/T per epoch (%)' : 'V/T per day (%)')
                  : metric === 'ft' ? (view === 'epoch' ? 'F/T per epoch (%)' : 'F/T per day (%)')
                  : 'F/V (%)';
@@ -424,7 +425,8 @@ function renderAll() {{
       ];
     }}
 
-    const tickFmt = is_fv ? '.3f' : '.0f';
+    // Y-axis tick precision: match the metric's typical value range
+    const tickFmt = metric === 'fv' ? '.3f' : metric === 'ft' ? '.2f' : '.1f';
 
     const layout = {{
       margin: {{ l: 70, r: 30, t: 10, b: view === 'epoch' ? 90 : 50 }},
