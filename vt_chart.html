@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Hydrex — Daily V/T by Bucket</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #171a21; --border: #262a33;
+      --text: #e7ecf2; --muted: #9aa4b2; --accent: #4ea8ff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: var(--bg); color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    h1 { margin: 0 0 6px; font-size: 22px; }
+    .subtitle { color: var(--muted); margin-bottom: 18px; font-size: 13px; }
+    .topbar { display: flex; justify-content: space-between; align-items: flex-end;
+               margin-bottom: 22px; flex-wrap: wrap; gap: 12px; }
+    .topbar-meta { color: var(--muted); font-size: 12px; text-align: right; }
+    .controls { background: var(--panel); border: 1px solid var(--border);
+                  border-radius: 10px; padding: 14px 18px; margin-bottom: 22px;
+                  display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+    .control-group { display: flex; gap: 16px; align-items: center; }
+    label { font-size: 13px; color: var(--text); cursor: pointer; }
+    input[type="checkbox"] { accent-color: var(--accent); margin-right: 4px; }
+    select { background: var(--bg); color: var(--text); border: 1px solid var(--border);
+              border-radius: 6px; padding: 4px 10px; font-size: 13px; }
+    .pool { background: var(--panel); border: 1px solid var(--border);
+              border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+    .pool-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+    .pool-address { font-family: ui-monospace, monospace; font-size: 11px;
+                      color: var(--muted); margin-bottom: 8px; word-break: break-all; }
+    .chart { min-height: 360px; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div>
+      <h1>Daily V/T by Bucket — April 1 → May 14</h1>
+      <p class="subtitle">Volume/TVL ratio per day. Aerodrome is approximated from weekly CSV (÷ 7).
+         Manual / Strat 1 / Strat 2 are derived from active liquidity share × pool daily volume.</p>
+    </div>
+    <div class="topbar-meta">
+      <a href="index.html">← Aero vs Hydrex</a> &nbsp;|&nbsp;
+      <a href="bootstrap.html">Bootstrap Tracker</a> &nbsp;|&nbsp;
+      <a href="ichi.html">ICHI Diagnostic</a>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="control-group">
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;">Y-axis</strong>
+      <label><input type="radio" name="yscale" value="linear" checked> Linear</label>
+      <label><input type="radio" name="yscale" value="log"> Log</label>
+    </div>
+    <div class="control-group">
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;">Y-cap</strong>
+      <select id="ycap">
+        <option value="0">Auto (no cap)</option>
+        <option value="300" selected>Cap at 300%</option>
+        <option value="500">Cap at 500%</option>
+        <option value="1000">Cap at 1000%</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <strong style="font-size:12px;color:var(--muted);text-transform:uppercase;">Smoothing</strong>
+      <select id="smooth">
+        <option value="1" selected>None (raw daily)</option>
+        <option value="3">3-day rolling avg</option>
+        <option value="7">7-day rolling avg</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="charts"></div>
+
+<script>
+const DATA = {"WETH/cbBTC": {"dates": ["2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04", "2026-04-05", "2026-04-06", "2026-04-07", "2026-04-08", "2026-04-09", "2026-04-10", "2026-04-11", "2026-04-12", "2026-04-13", "2026-04-14", "2026-04-15", "2026-04-16", "2026-04-17", "2026-04-18", "2026-04-19", "2026-04-20", "2026-04-21", "2026-04-22", "2026-04-23", "2026-04-24", "2026-04-25", "2026-04-26", "2026-04-27", "2026-04-28", "2026-04-29", "2026-04-30", "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08", "2026-05-09", "2026-05-10", "2026-05-11", "2026-05-12", "2026-05-13", "2026-05-14"], "aero": [202.35, 213.34, 213.34, 213.34, 213.34, 213.34, 213.34, 213.34, 271.47, 271.47, 271.47, 271.47, 271.47, 271.47, 271.47, 534.62, 534.62, 534.62, 534.62, 534.62, 534.62, 534.62, 357.32, 357.32, 357.32, 357.32, 357.32, 357.32, 357.32, 395.78, 395.78, 395.78, 395.78, 395.78, 395.78, 395.78, 329.73, 329.73, 329.73, 329.73, 329.73, 329.73, 329.73, 0.0], "manual": [71.22, 103.85, 35.34, 25.24, 52.33, 74.65, 145.27, 82.89, 42.41, 62.0, 56.56, 46.21, 96.32, 58.5, 32.38, 79.88, 72.45, 42.89, 52.65, 62.96, 47.35, 62.51, 46.84, 25.98, 6.17, 19.66, 20.99, 17.26, 40.17, 15.46, 18.41, 9.73, 18.88, 50.28, 28.47, 25.94, 30.63, 30.83, 15.18, 34.1, 13.93, 26.86, 39.69, 19.95], "strat1": [56.12, 1.33, 30.15, 21.81, 47.53, 67.38, 2.17, 1.41, 41.74, 58.42, 53.3, 45.61, 92.61, 0.61, 0.51, 1.29, 79.31, 46.57, 57.35, 68.93, 51.76, 72.17, 54.14, 29.84, 7.1, 22.64, 24.17, 19.86, 44.41, 17.1, 20.65, 10.87, 21.11, 56.31, 31.84, 60.0, 5.23, 5.47, 2.7, 6.07, 32.97, 4.75, 7.04, 3.67], "strat2": [47.89, 15.39, 25.16, 18.23, 39.71, 56.44, 18.62, 10.7, 36.74, 51.75, 46.93, 38.14, 79.75, 47.66, 29.84, 75.11, 68.23, 39.94, 49.56, 60.06, 45.26, 68.16, 51.26, 28.63, 6.79, 21.68, 23.01, 19.05, 44.24, 17.12, 20.76, 0.18, 0.35, 1.12, 0.48, 0.45, 0.55, 0.58, 0.24, 99.93, 0.26, 0.52, 0.77, 92.9], "s1_name": "cbBTC-in", "s2_name": "WETH-in", "pool_addr": "0x3f9b863ef4b295d6ba370215bcca3785fcc44f44"}, "WETH/USDC": {"dates": ["2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04", "2026-04-05", "2026-04-06", "2026-04-07", "2026-04-08", "2026-04-09", "2026-04-10", "2026-04-11", "2026-04-12", "2026-04-13", "2026-04-14", "2026-04-15", "2026-04-16", "2026-04-17", "2026-04-18", "2026-04-19", "2026-04-20", "2026-04-21", "2026-04-22", "2026-04-23", "2026-04-24", "2026-04-25", "2026-04-26", "2026-04-27", "2026-04-28", "2026-04-29", "2026-04-30", "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08", "2026-05-09", "2026-05-10", "2026-05-11", "2026-05-12", "2026-05-13", "2026-05-14"], "aero": [210.71, 1074.06, 1074.06, 1074.06, 1074.06, 1074.06, 1074.06, 1074.06, 925.15, 925.15, 925.15, 925.15, 925.15, 925.15, 925.15, 1278.54, 1278.54, 1278.54, 1278.54, 1278.54, 1278.54, 1278.54, 844.44, 844.44, 844.44, 844.44, 844.44, 844.44, 844.44, 645.14, 645.14, 645.14, 645.14, 645.14, 645.14, 645.14, 690.96, 690.96, 690.96, 690.96, 690.96, 690.96, 690.96, 0.0], "manual": [76.71, 18.94, 24.39, 34.07, 58.67, 22.43, 31.71, 9.84, 39.53, 88.11, 74.91, 107.04, 169.92, 111.79, 37.1, 126.45, 195.3, 58.72, 49.34, 47.67, 70.63, 74.17, 125.17, 124.99, 55.78, 96.79, 89.74, 59.99, 109.59, 30.13, 27.69, 27.81, 114.75, 29.77, 32.28, 54.71, 34.7, 67.39, 60.3, 188.12, 128.85, 176.15, 19.71, 21.42], "strat1": [81.22, 30.81, 37.71, 52.36, 84.59, 32.39, 45.47, 56.0, 41.64, 89.23, 47.65, 67.37, 109.4, 96.23, 68.66, 108.28, 153.42, 47.31, 77.12, 103.27, 147.51, 158.95, 118.82, 107.87, 53.64, 92.89, 88.87, 63.66, 128.04, 92.01, 133.36, 54.77, 147.54, 171.14, 173.57, 302.86, 184.54, 109.16, 92.97, 201.13, 152.6, 170.15, 120.71, 141.82], "strat2": [68.01, 26.08, 30.93, 42.88, 69.53, 26.68, 37.79, 47.92, 35.05, 75.1, 49.93, 74.42, 110.95, 2.02, 74.21, 2.27, 3.21, 51.6, 80.88, 105.76, 153.15, 165.62, 125.37, 112.51, 55.71, 96.57, 93.64, 65.89, 132.0, 93.94, 129.98, 54.0, 146.43, 170.18, 2.53, 4.44, 196.28, 114.12, 97.6, 212.44, 163.23, 180.39, 125.57, 132.52], "s1_name": "WETH-in", "s2_name": "USDC-in", "pool_addr": "0x82dbe18346a8656dbb5e76f74bf3ae279cc16b29"}, "USDC/cbBTC": {"dates": ["2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04", "2026-04-05", "2026-04-06", "2026-04-07", "2026-04-08", "2026-04-09", "2026-04-10", "2026-04-11", "2026-04-12", "2026-04-13", "2026-04-14", "2026-04-15", "2026-04-16", "2026-04-17", "2026-04-18", "2026-04-19", "2026-04-20", "2026-04-21", "2026-04-22", "2026-04-23", "2026-04-24", "2026-04-25", "2026-04-26", "2026-04-27", "2026-04-28", "2026-04-29", "2026-04-30", "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08", "2026-05-09", "2026-05-10", "2026-05-11", "2026-05-12", "2026-05-13", "2026-05-14"], "aero": [433.55, 493.67, 493.67, 493.67, 493.67, 493.67, 493.67, 493.67, 782.02, 782.02, 782.02, 782.02, 782.02, 782.02, 782.02, 1088.92, 1088.92, 1088.92, 1088.92, 1088.92, 1088.92, 1088.92, 785.2, 785.2, 785.2, 785.2, 785.2, 785.2, 785.2, 656.27, 656.27, 656.27, 656.27, 656.27, 656.27, 656.27, 587.23, 587.23, 587.23, 587.23, 587.23, 587.23, 587.23, 0.0], "manual": [46.13, 192.88, 22.2, 31.15, 40.57, 72.24, 72.09, 130.85, 48.49, 40.39, 22.64, 22.11, 147.12, 114.73, 21.49, 173.91, 124.08, 20.09, 6.45, 191.29, 26.66, 7.1, 14.79, 13.04, 2.09, 7.65, 7.16, 1.58, 17.41, 17.18, 6.52, 21.14, 37.72, 13.48, 1.12, 361.89, 16.62, 28.8, 7.39, 16.35, 26.08, 18.9, 105.68, 15.79], "strat1": [232.97, 49.34, 94.12, 6.63, 164.36, 297.77, 332.8, 10.62, 317.02, 258.5, 158.31, 154.57, 46.87, 2.17, 416.98, 16.61, 5.94, 3.75, 119.9, 141.0, 20.78, 215.27, 509.12, 453.4, 71.74, 262.57, 247.75, 34.96, 23.91, 20.29, 146.98, 87.29, 181.5, 285.83, 26.02, 21.49, 258.1, 19.53, 107.79, 238.89, 334.98, 242.29, 65.55, 196.88], "strat2": [10.22, 50.5, 107.01, 150.14, 184.61, 13.15, 298.63, 168.72, 336.27, 12.29, 7.09, 7.26, 5.1, 36.85, 16.81, 127.75, 95.42, 584.73, 101.26, 10.27, 509.43, 62.16, 412.85, 17.82, 59.15, 10.35, 9.69, 57.0, 610.91, 547.17, 182.12, 4.26, 7.59, 238.27, 20.88, 211.66, 216.65, 496.81, 0.73, 283.87, 393.28, 285.49, 6.13, 1.3], "s1_name": "USDC-in", "s2_name": "cbBTC-in", "pool_addr": "0x0ba69825c4c033e72309f6ac0bde0023b15cc97c"}, "WETH/EURC": {"dates": ["2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04", "2026-04-05", "2026-04-06", "2026-04-07", "2026-04-08", "2026-04-09", "2026-04-10", "2026-04-11", "2026-04-12", "2026-04-13", "2026-04-14", "2026-04-15", "2026-04-16", "2026-04-17", "2026-04-18", "2026-04-19", "2026-04-20", "2026-04-21", "2026-04-22", "2026-04-23", "2026-04-24", "2026-04-25", "2026-04-26", "2026-04-27", "2026-04-28", "2026-04-29", "2026-04-30", "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08", "2026-05-09", "2026-05-10", "2026-05-11", "2026-05-12", "2026-05-13", "2026-05-14"], "aero": [309.81, 214.28, 214.28, 214.28, 214.28, 214.28, 214.28, 214.28, 383.57, 383.57, 383.57, 383.57, 383.57, 383.57, 383.57, 443.14, 443.14, 443.14, 443.14, 443.14, 443.14, 443.14, 275.52, 275.52, 275.52, 275.52, 275.52, 275.52, 275.52, 256.79, 256.79, 256.79, 256.79, 256.79, 256.79, 256.79, 228.93, 228.93, 228.93, 228.93, 228.93, 228.93, 228.93, 0.0], "manual": [141.13, 7.96, 1.46, 3.46, 5.28, 7.77, 8.41, 740.68, 11.64, 0.91, 2285.82, 3.51, 37.38, 53.31, 27.84, 1.29, 44.48, 427.26, 44.63, 159.89, 2.58, 0.38, 2.06, 0.2, 8.7, 99.79, 4.75, 3.09, 8.27, 7.33, 12.98, 2.56, 4.45, 9.72, 26.76, 24.9, 4.2, 696.69, 17.35, 49.97, 3430.14, 24.83, 198.73, 450.92], "strat1": [214.86, 253.03, 45.78, 113.22, 164.27, 252.05, 307.12, 74.26, 429.69, 191.76, 10.62, 142.06, 152.14, 201.01, 268.53, 267.62, 342.39, 120.54, 121.57, 405.42, 586.3, 87.41, 358.2, 29.48, 3.26, 155.47, 142.09, 74.42, 229.33, 190.07, 289.86, 60.5, 128.44, 279.65, 2.74, 226.55, 27.21, 198.43, 108.18, 329.2, 13.66, 180.29, 56.69, 127.37], "strat2": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 35.26, 0.0, 0.0, 28.17, 0.0, 0.0, 17.78, 0.0, 0.0, 0.0, 24.81, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.23, 0.0, 0.0, 0.0, 0.0, 0.0, 25.47, 0.0, 0.0, 0.0], "s1_name": "EURC-in", "s2_name": "WETH-in", "pool_addr": "0xb20f018dde5a6fe7f93c31da05a5da9efbc52772"}};
+const PAIRS = ["WETH/cbBTC", "WETH/USDC", "USDC/cbBTC", "WETH/EURC"];
+
+const COLORS = {
+  aero:   "#ffd43b",  // yellow
+  manual: "#10b981",  // green
+  strat1: "#6f8aff",  // royal blue
+  strat2: "#f59e0b",  // amber
+};
+
+function rollingAvg(arr, window) {
+  if (window <= 1) return arr;
+  const out = new Array(arr.length).fill(null);
+  for (let i = 0; i < arr.length; i++) {
+    const start = Math.max(0, i - window + 1);
+    const slice = arr.slice(start, i + 1).filter(v => v !== null && !isNaN(v));
+    if (slice.length === 0) continue;
+    out[i] = slice.reduce((a, b) => a + b, 0) / slice.length;
+  }
+  return out;
+}
+
+function renderAll() {
+  const yscale = document.querySelector('input[name="yscale"]:checked').value;
+  const ycap = parseFloat(document.getElementById('ycap').value);
+  const smooth = parseInt(document.getElementById('smooth').value);
+
+  const container = document.getElementById('charts');
+  container.innerHTML = '';
+
+  for (const pair of PAIRS) {
+    const d = DATA[pair];
+    const panel = document.createElement('div');
+    panel.className = 'pool';
+    panel.innerHTML = `
+      <div class="pool-title">${pair}</div>
+      <div class="pool-address">${d.pool_addr}</div>
+      <div class="chart" id="chart-${pair.replace('/','-')}"></div>
+    `;
+    container.appendChild(panel);
+
+    // Apply smoothing
+    const aero   = rollingAvg(d.aero,   smooth);
+    const manual = rollingAvg(d.manual, smooth);
+    const s1     = rollingAvg(d.strat1, smooth);
+    const s2     = rollingAvg(d.strat2, smooth);
+
+    // Apply y cap (set values > cap to null so they're hidden but x-axis remains)
+    const cap = ycap > 0 ? ycap : Infinity;
+    const clamp = arr => arr.map(v => v === null || isNaN(v) ? null : (v > cap ? cap : v));
+
+    const traces = [
+      { x: d.dates, y: clamp(aero),   mode: 'lines+markers', name: 'Aero (approx)',
+         line: { color: COLORS.aero,   width: 2 }, marker: { size: 4 },
+         hovertemplate: 'Aero: %{y:.1f}%<extra></extra>' },
+      { x: d.dates, y: clamp(manual), mode: 'lines+markers', name: 'Manual',
+         line: { color: COLORS.manual, width: 2 }, marker: { size: 4 },
+         hovertemplate: 'Manual: %{y:.1f}%<extra></extra>' },
+      { x: d.dates, y: clamp(s1),     mode: 'lines+markers', name: `Strat 1 (${d.s1_name})`,
+         line: { color: COLORS.strat1, width: 2 }, marker: { size: 4 },
+         hovertemplate: 'Strat 1: %{y:.1f}%<extra></extra>' },
+      { x: d.dates, y: clamp(s2),     mode: 'lines+markers', name: `Strat 2 (${d.s2_name})`,
+         line: { color: COLORS.strat2, width: 2 }, marker: { size: 4 },
+         hovertemplate: 'Strat 2: %{y:.1f}%<extra></extra>' },
+    ];
+
+    const layout = {
+      margin: { l: 60, r: 30, t: 10, b: 50 },
+      paper_bgcolor: '#171a21',
+      plot_bgcolor: '#171a21',
+      font: { color: '#e7ecf2' },
+      xaxis: {
+        gridcolor: 'rgba(255,255,255,0.04)',
+        zerolinecolor: 'rgba(255,255,255,0.08)',
+        color: '#9aa4b2',
+      },
+      yaxis: {
+        type: yscale,
+        title: { text: 'V/T (%)', font: { size: 12, color: '#9aa4b2' } },
+        gridcolor: 'rgba(255,255,255,0.04)',
+        zerolinecolor: 'rgba(255,255,255,0.08)',
+        color: '#9aa4b2',
+        tickformat: '.0f',
+        ticksuffix: '%',
+      },
+      hovermode: 'x unified',
+      legend: { orientation: 'h', x: 0.5, xanchor: 'center', y: -0.18,
+                 font: { size: 11, color: '#e7ecf2' } },
+    };
+
+    Plotly.newPlot(`chart-${pair.replace('/','-')}`, traces, layout, {
+      displayModeBar: true,
+      scrollZoom: true,
+      responsive: true,
+      displaylogo: false,
+      modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+    });
+  }
+}
+
+document.querySelectorAll('input[name="yscale"], #ycap, #smooth').forEach(el =>
+  el.addEventListener('change', renderAll)
+);
+renderAll();
+</script>
+</body>
+</html>
