@@ -77,6 +77,7 @@
         <option value="fees_tvl">Fees / TVL (%)</option>
         <option value="fees_vol">Fees / Volume (%)</option>
         <option value="vol_tvl">Volume / TVL (turnover)</option>
+        <option value="tier_ft_overlay">Fee Tier vs F/T (overlay)</option>
       </select>
       <div class="divider"></div>
       <h3>Fee Tiers</h3>
@@ -134,6 +135,17 @@
       fees_tvl: { label: 'Fees / TVL (%)', unit: '%', calc: r => (r.fees / r.tvl) * 100 },
       fees_vol: { label: 'Fees / Volume (%)', unit: '%', calc: r => (r.fees / r.vol) * 100 },
       vol_tvl:  { label: 'Volume / TVL (×)',  unit: 'x', calc: r => r.vol / r.tvl },
+      tier_ft_overlay: { label: 'Fee Tier vs F/T (dual axis)', unit: '%', isDualAxis: true,
+                         calc: r => (r.fees / r.tvl) * 100 },  // primary axis = F/T
+    };
+
+    // Nominal fee tiers in % (from sidebar). For dual-axis "Fee Tier vs F/T" view.
+    const NOMINAL_FEE_TIER = {
+      'WETH/cbBTC': { Hydrex: 0.030, Aero: 0.040 },
+      'USDC/cbBTC': { Hydrex: 0.020, Aero: 0.040 },
+      'WETH/USDC':  { Hydrex: 0.014, Aero: 0.040 },
+      'WETH/EURC':  { Hydrex: 0.022, Aero: 0.040 },
+      'WETH/cbXRP': { Hydrex: 0.500, Aero: 0.300 },
     };
 
     let view = 'grid';
@@ -193,6 +205,45 @@
       const byEpoch = {};
       rows.forEach(r => byEpoch[r.e] = r);
       return epochs.map(e => byEpoch[e] ? cfg.calc(byEpoch[e]) : null);
+    }
+
+    function buildDualAxisOptions(pairName) {
+      return {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
+        plugins: {
+          legend: { display: true, labels: { color: '#e7ecf2', font: { size: 9 }, boxWidth: 14 } },
+          tooltip: {
+            backgroundColor: '#0f1115', borderColor: '#262a33', borderWidth: 1,
+            callbacks: {
+              label: ctx => {
+                const v = ctx.parsed.y;
+                if (v === null || v === undefined) return `${ctx.dataset.label}: —`;
+                const formatted = v >= 1 ? v.toFixed(3) + '%' : v.toFixed(4) + '%';
+                return `${ctx.dataset.label}: ${formatted}`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9aa4b2', font: { size: 10 } } },
+          yL: {
+            type: 'linear', position: 'left',
+            title: { display: true, text: 'F/T (%)', color: '#e7ecf2', font: { size: 10 } },
+            grid: { color: 'rgba(255,255,255,0.07)' },
+            ticks: { color: '#9aa4b2', font: { size: 10 }, callback: v => v.toFixed(2) + '%' },
+            beginAtZero: true,
+          },
+          yR: {
+            type: 'linear', position: 'right',
+            title: { display: true, text: 'Fee tier / F/V (%)', color: '#ffd43b', font: { size: 10 } },
+            grid: { display: false },
+            ticks: { color: '#ffd43b', font: { size: 10 }, callback: v => v.toFixed(3) + '%' },
+            beginAtZero: true,
+          },
+        }
+      };
     }
 
     function buildOptions(cfg, showLegend) {
@@ -256,18 +307,57 @@
           grid.appendChild(panel);
           const canvas = panel.querySelector('canvas');
 
-          charts[p.name] = new Chart(canvas, {
-            type: 'line',
-            data: {
-              labels: epochs.map(e => `${e}
+          if (cfg.isDualAxis && metric === 'tier_ft_overlay') {
+            // Dual-axis overlay: F/T on left, Fee Tier (F/V realized + nominal) on right
+            const ft_calc = r => (r.fees / r.tvl) * 100;
+            const fv_calc = r => r.vol > 0 ? (r.fees / r.vol) * 100 : null;
+            const aeroSeries = (RAW.Aero[p.name] || []);
+            const hxSeries   = (RAW.Hydrex[p.name] || []);
+            const byEpochAero = {}; aeroSeries.forEach(r => byEpochAero[r.e] = r);
+            const byEpochHx   = {}; hxSeries.forEach(r => byEpochHx[r.e] = r);
+
+            const aero_ft = epochs.map(e => byEpochAero[e] ? ft_calc(byEpochAero[e]) : null);
+            const hx_ft   = epochs.map(e => byEpochHx[e]   ? ft_calc(byEpochHx[e])   : null);
+            const aero_fv = epochs.map(e => byEpochAero[e] ? fv_calc(byEpochAero[e]) : null);
+            const hx_fv   = epochs.map(e => byEpochHx[e]   ? fv_calc(byEpochHx[e])   : null);
+
+            // Horizontal reference lines for nominal fee tier
+            const nominal = NOMINAL_FEE_TIER[p.name] || {};
+            const nominal_aero = epochs.map(() => nominal.Aero || null);
+            const nominal_hx   = epochs.map(() => nominal.Hydrex || null);
+
+            charts[p.name] = new Chart(canvas, {
+              type: 'line',
+              data: {
+                labels: epochs.map(e => `${e}\n${epochDates[e]}`),
+                datasets: [
+                  // F/T lines (left axis) — pool color
+                  { label: 'Aero F/T', data: aero_ft, borderColor: p.color, borderWidth: 2.5, pointRadius: 3, tension: 0.25, yAxisID: 'yL' },
+                  { label: 'Hydrex F/T', data: hx_ft, borderColor: p.color, borderWidth: 2.5, borderDash: [5, 4], pointRadius: 3, pointStyle: 'triangle', tension: 0.25, yAxisID: 'yL' },
+                  // F/V realized lines (right axis) — gold
+                  { label: 'Aero F/V (realized)', data: aero_fv, borderColor: '#ffd43b', borderWidth: 1.5, pointRadius: 2, tension: 0.25, yAxisID: 'yR' },
+                  { label: 'Hydrex F/V (realized)', data: hx_fv, borderColor: '#ffd43b', borderWidth: 1.5, borderDash: [5, 4], pointRadius: 2, pointStyle: 'triangle', tension: 0.25, yAxisID: 'yR' },
+                  // Nominal fee tier (right axis) — thin dotted reference
+                  { label: 'Aero nominal tier', data: nominal_aero, borderColor: 'rgba(255,212,59,0.4)', borderWidth: 1, borderDash: [2, 3], pointRadius: 0, yAxisID: 'yR' },
+                  { label: 'Hydrex nominal tier', data: nominal_hx, borderColor: 'rgba(255,212,59,0.25)', borderWidth: 1, borderDash: [2, 3], pointRadius: 0, yAxisID: 'yR' },
+                ],
+              },
+              options: buildDualAxisOptions(p.name),
+            });
+          } else {
+            charts[p.name] = new Chart(canvas, {
+              type: 'line',
+              data: {
+                labels: epochs.map(e => `${e}
 ${epochDates[e]}`),
-              datasets: [
-                { label: 'Aero', data: seriesForPair('Aero', p.name, metric), borderColor: p.color, borderWidth: 2.5, pointRadius: 3, tension: 0.25 },
-                { label: 'Hydrex', data: seriesForPair('Hydrex', p.name, metric), borderColor: p.color, borderWidth: 2.5, borderDash: [5, 4], pointRadius: 3, pointStyle: 'triangle', tension: 0.25 },
-              ],
-            },
-            options: buildOptions(cfg, true),
-          });
+                datasets: [
+                  { label: 'Aero', data: seriesForPair('Aero', p.name, metric), borderColor: p.color, borderWidth: 2.5, pointRadius: 3, tension: 0.25 },
+                  { label: 'Hydrex', data: seriesForPair('Hydrex', p.name, metric), borderColor: p.color, borderWidth: 2.5, borderDash: [5, 4], pointRadius: 3, pointStyle: 'triangle', tension: 0.25 },
+                ],
+              },
+              options: buildOptions(cfg, true),
+            });
+          }
         });
       } else {
         const wrap = document.createElement('div');
