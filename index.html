@@ -345,20 +345,24 @@
           };
         }).filter(x => x);
 
-        // Compute actual data extents — keep X tight to fee-tier range (~0.5 to 3)
-        // but let Y span its full range (can hit 10x+ on big-gap pools).
-        const allX = datasets.flatMap(d => d.data.map(pt => pt.x));
-        const allY = datasets.flatMap(d => d.data.map(pt => pt.y));
-        const xMin = 0;
-        const xMax = Math.max(...allX, 1) * 1.15;   // tight to actual tier ratios
-        const yMin = 0;
-        const yMax = Math.max(...allY, 1) * 1.15;
+        // Log-scale axes so 1× lands at chart center. In log space, 0.5× and 2× are
+        // equidistant from 1. We compute symmetric half-widths around log(1)=0 on each axis.
+        const allX = datasets.flatMap(d => d.data.map(pt => pt.x)).filter(v => v > 0);
+        const allY = datasets.flatMap(d => d.data.map(pt => pt.y)).filter(v => v > 0);
+        const logSpanX = Math.max(...allX.map(v => Math.abs(Math.log10(v))), Math.log10(2)) * 1.15;
+        const logSpanY = Math.max(...allY.map(v => Math.abs(Math.log10(v))), Math.log10(2)) * 1.15;
+        const xMin = Math.pow(10, -logSpanX);
+        const xMax = Math.pow(10,  logSpanX);
+        const yMin = Math.pow(10, -logSpanY);
+        const yMax = Math.pow(10,  logSpanY);
+        // For diagonal/reference lines, use the broader span so they cover full chart
+        const refMin = Math.min(xMin, yMin);
         const refMax = Math.max(xMax, yMax);
 
-        // y = x diagonal reference (only the visible portion draws; chart axes are clamped)
+        // y = x diagonal reference (covers full chart on log scale)
         datasets.push({
           label: 'y = x (tier ratio = F/T ratio)',
-          data: [{x: 0, y: 0}, {x: refMax, y: refMax}],
+          data: [{x: refMin, y: refMin}, {x: refMax, y: refMax}],
           borderColor: 'rgba(255,255,255,0.25)',
           borderDash: [4, 4],
           borderWidth: 1,
@@ -370,8 +374,8 @@
         // Vertical line at x = 1 (Aero tier = Hydrex tier)
         datasets.push({
           label: 'x = 1 (equal fee tier)',
-          data: [{x: 1, y: 0}, {x: 1, y: refMax}],
-          borderColor: 'rgba(78,168,255,0.30)',
+          data: [{x: 1, y: yMin}, {x: 1, y: yMax}],
+          borderColor: 'rgba(78,168,255,0.40)',
           borderDash: [2, 4],
           borderWidth: 1,
           pointRadius: 0,
@@ -382,8 +386,8 @@
         // Horizontal line at y = 1 (Aero F/T = Hydrex F/T)
         datasets.push({
           label: 'y = 1 (equal F/T)',
-          data: [{x: 0, y: 1}, {x: refMax, y: 1}],
-          borderColor: 'rgba(78,168,255,0.30)',
+          data: [{x: xMin, y: 1}, {x: xMax, y: 1}],
+          borderColor: 'rgba(78,168,255,0.40)',
           borderDash: [2, 4],
           borderWidth: 1,
           pointRadius: 0,
@@ -418,17 +422,32 @@
             },
             scales: {
               x: {
-                type: 'linear', position: 'bottom',
-                title: { display: true, text: 'Aero fee tier ÷ Hydrex fee tier', color: '#e7ecf2' },
+                type: 'logarithmic', position: 'bottom',
+                title: { display: true, text: 'Aero fee tier ÷ Hydrex fee tier (log scale, 1× centered)', color: '#e7ecf2' },
                 grid: { color: 'rgba(255,255,255,0.05)' },
-                ticks: { color: '#9aa4b2', callback: v => v.toFixed(1) + '×' },
+                ticks: {
+                  color: '#9aa4b2',
+                  callback: v => {
+                    // Show major ticks: 0.25, 0.5, 1, 2, 4, 8
+                    const valid = [0.25, 0.33, 0.5, 0.67, 1, 1.5, 2, 3, 4, 6, 8, 12, 16];
+                    if (valid.some(t => Math.abs(v - t) < 0.001 * v)) return v.toFixed(2).replace(/\.?0+$/, '') + '×';
+                    return '';
+                  }
+                },
                 min: xMin, max: xMax,
               },
               y: {
-                type: 'linear',
-                title: { display: true, text: 'Aero F/T ÷ Hydrex F/T', color: '#e7ecf2' },
+                type: 'logarithmic',
+                title: { display: true, text: 'Aero F/T ÷ Hydrex F/T (log scale, 1× centered)', color: '#e7ecf2' },
                 grid: { color: 'rgba(255,255,255,0.07)' },
-                ticks: { color: '#9aa4b2', callback: v => v.toFixed(1) + '×' },
+                ticks: {
+                  color: '#9aa4b2',
+                  callback: v => {
+                    const valid = [0.1, 0.25, 0.33, 0.5, 0.67, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24];
+                    if (valid.some(t => Math.abs(v - t) < 0.001 * v)) return v.toFixed(2).replace(/\.?0+$/, '') + '×';
+                    return '';
+                  }
+                },
                 min: yMin, max: yMax,
               },
             }
