@@ -78,6 +78,7 @@
         <option value="fees_vol">Fees / Volume (%)</option>
         <option value="vol_tvl">Volume / TVL (turnover)</option>
         <option value="tier_ft_overlay">Fee Tier vs F/T (overlay)</option>
+        <option value="tier_ft_scatter">Tier ratio × F/T ratio (scatter)</option>
       </select>
       <div class="divider"></div>
       <h3>Fee Tiers</h3>
@@ -294,6 +295,113 @@
       const container = document.getElementById('chart-container');
       container.innerHTML = '';
       const activePairs = pairs.filter(p => active.has(p.name));
+
+      // Special-case: scatter view for tier ratio × F/T ratio (ignores grid/overlay toggle)
+      if (metric === 'tier_ft_scatter') {
+        const wrap = document.createElement('div');
+        wrap.className = 'chart-wrap';
+        wrap.innerHTML = `
+          <div class="chart-title">Aero fee tier ÷ Hydrex fee tier (x)  vs  Aero F/T ÷ Hydrex F/T (y) — each point = one (pool, epoch)</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
+            Points <strong>above y=x</strong>: Aero captures extra yield beyond what fee tier difference would explain (volume advantage).<br>
+            Points <strong>on y=x</strong>: Aero's yield premium = fee tier premium (fee tier fully explains the gap).<br>
+            Points <strong>below y=x</strong>: Hydrex's lower fee tier is winning back volume share (efficiency advantage).
+          </div>
+          <div style="height:480px"><canvas></canvas></div>
+        `;
+        container.appendChild(wrap);
+        const canvas = wrap.querySelector('canvas');
+
+        const datasets = activePairs.map(p => {
+          const tier = NOMINAL_FEE_TIER[p.name];
+          if (!tier || !tier.Aero || !tier.Hydrex) return null;
+          const tierRatio = tier.Aero / tier.Hydrex;
+          const aero = (RAW.Aero[p.name] || []);
+          const hx   = (RAW.Hydrex[p.name] || []);
+          const byA  = {}; aero.forEach(r => byA[r.e] = r);
+          const byH  = {}; hx.forEach(r => byH[r.e] = r);
+
+          const points = [];
+          epochs.forEach(e => {
+            const ra = byA[e], rh = byH[e];
+            if (!ra || !rh || !ra.tvl || !rh.tvl || !ra.fees || !rh.fees) return;
+            const aFt = (ra.fees / ra.tvl) * 100;
+            const hFt = (rh.fees / rh.tvl) * 100;
+            if (hFt === 0) return;
+            const ftRatio = aFt / hFt;
+            points.push({ x: tierRatio, y: ftRatio, e, aFt, hFt });
+          });
+          return {
+            label: p.name,
+            data: points,
+            backgroundColor: p.color,
+            borderColor: p.color,
+            pointRadius: 5,
+            pointHoverRadius: 7,
+            showLine: false,
+          };
+        }).filter(x => x);
+
+        // Build y=x reference line covering the data range
+        const allX = datasets.flatMap(d => d.data.map(pt => pt.x));
+        const allY = datasets.flatMap(d => d.data.map(pt => pt.y));
+        const maxXY = Math.max(...allX, ...allY, 1) * 1.1;
+        datasets.push({
+          label: 'y = x (fee tier ratio = F/T ratio)',
+          data: [{x: 0, y: 0}, {x: maxXY, y: maxXY}],
+          borderColor: 'rgba(255,255,255,0.25)',
+          borderDash: [4, 4],
+          borderWidth: 1,
+          pointRadius: 0,
+          showLine: true,
+          fill: false,
+        });
+
+        charts.scatter = new Chart(canvas, {
+          type: 'scatter',
+          data: { datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: true, labels: { color: '#e7ecf2', font: { size: 11 } } },
+              tooltip: {
+                backgroundColor: '#0f1115', borderColor: '#262a33', borderWidth: 1,
+                callbacks: {
+                  label: ctx => {
+                    const pt = ctx.raw;
+                    if (pt.e === undefined) return `${ctx.dataset.label}`;
+                    return [
+                      `${ctx.dataset.label} — Epoch ${pt.e}`,
+                      `Tier ratio (Aero÷Hx): ${pt.x.toFixed(2)}×`,
+                      `F/T ratio (Aero÷Hx): ${pt.y.toFixed(2)}×`,
+                      `Aero F/T: ${pt.aFt.toFixed(3)}%`,
+                      `Hydrex F/T: ${pt.hFt.toFixed(3)}%`,
+                    ];
+                  }
+                }
+              }
+            },
+            scales: {
+              x: {
+                type: 'linear', position: 'bottom',
+                title: { display: true, text: 'Aero fee tier ÷ Hydrex fee tier', color: '#e7ecf2' },
+                grid: { color: 'rgba(255,255,255,0.05)' },
+                ticks: { color: '#9aa4b2', callback: v => v.toFixed(1) + '×' },
+                beginAtZero: true,
+              },
+              y: {
+                type: 'linear',
+                title: { display: true, text: 'Aero F/T ÷ Hydrex F/T', color: '#e7ecf2' },
+                grid: { color: 'rgba(255,255,255,0.07)' },
+                ticks: { color: '#9aa4b2', callback: v => v.toFixed(1) + '×' },
+                beginAtZero: true,
+              },
+            }
+          }
+        });
+        return;
+      }
 
       if (view === 'grid') {
         const grid = document.createElement('div');
