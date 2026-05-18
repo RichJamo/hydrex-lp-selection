@@ -94,6 +94,59 @@
           "pool_address": "0xa3c25d3f65e11008465f477665cf2303a420cfb2"
         }
       ]
+    },
+    {
+      "hydrex_epoch": 36,
+      "aero_epoch": 143,
+      "epoch_start": "2026-05-21",
+      "epoch_end": "2026-05-28",
+      "report_date_utc": "2026-05-27T23:59:00Z",
+      "pools": [
+        {
+          "pair": "USDC/VVV",
+          "pool_address": "0x02107bab40bba06ae979a15f67b5ad3853c5e116"
+        },
+        {
+          "pair": "USDC/ZEN",
+          "pool_address": "0x415233bf9b9156d4f777d580e67c0a4e398a84c3"
+        },
+        {
+          "pair": "cbMEGA/WETH",
+          "pool_address": "0x5bc54e33cfb988bfe5e578ef69c41d357c318bde"
+        },
+        {
+          "pair": "WETH/CHECK",
+          "pool_address": "0x567b69f72c0a2689c9be0cfba576af3caa896cb2"
+        },
+        {
+          "pair": "WETH/NOCK",
+          "pool_address": "0x467a8846e7b54eac5d4d1cb2fdc9b8752212ff0e"
+        },
+        {
+          "pair": "SOSO/USDC",
+          "pool_address": "0x17ed8b5358ad5dbf6ef5f07cf5e398ea40579116"
+        },
+        {
+          "pair": "MAG7.ssi/USDC",
+          "pool_address": "0x88eaaa53405a6bf098bc38827f4642bcfd195256"
+        },
+        {
+          "pair": "LFI/USDC",
+          "pool_address": "0x53ab4c60ff04b782f630a8685af95404f099aafd"
+        },
+        {
+          "pair": "deSPXA/USDC",
+          "pool_address": "0xa3c25d3f65e11008465f477665cf2303a420cfb2"
+        },
+        {
+          "pair": "AORA/USDC",
+          "pool_address": "0x7b5b9ac36bef2e808a02568704f651c607634c4b"
+        },
+        {
+          "pair": "DRB/WETH",
+          "pool_address": "0xa9a12101beddf0950c65c32a915ae21db002623d"
+        }
+      ]
     }
   ]
 }
