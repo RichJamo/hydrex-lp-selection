@@ -261,7 +261,16 @@ function renderAll() {
       shapes,
       annotations,
       hovermode: 'x unified',
-      showlegend: false,
+      showlegend: smooth !== 'raw',
+      legend: {
+        orientation: 'h',
+        x: 1, xanchor: 'right',
+        y: 1.02, yanchor: 'bottom',
+        bgcolor: 'rgba(23,26,33,0.7)',
+        bordercolor: '#262a33',
+        borderwidth: 1,
+        font: { size: 11, color: '#e7ecf2' },
+      },
     };
 
     Plotly.newPlot(`chart-${pair.replace('/','-')}`, traces, layout, {
