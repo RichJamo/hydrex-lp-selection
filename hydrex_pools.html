@@ -61,6 +61,19 @@
       <label><input type="radio" name="metric" value="f_v"> F/V</label>
     </div>
     <div class="control-group">
+      <strong>View</strong>
+      <label><input type="radio" name="mode" value="absolute" checked> Absolute value</label>
+      <label><input type="radio" name="mode" value="delta_pct"> Day-over-day %</label>
+      <label><input type="radio" name="mode" value="delta_abs"> Day-over-day Δ</label>
+    </div>
+    <div class="control-group">
+      <strong>Smoothing</strong>
+      <label><input type="radio" name="smooth" value="raw"> Raw only</label>
+      <label><input type="radio" name="smooth" value="ma7" checked> Raw + 7-day MA</label>
+      <label><input type="radio" name="smooth" value="ma14"> Raw + 14-day MA</label>
+      <label><input type="radio" name="smooth" value="ma7only"> 7-day MA only</label>
+    </div>
+    <div class="control-group">
       <strong>Y-axis</strong>
       <label><input type="radio" name="yscale" value="linear" checked> Linear</label>
       <label><input type="radio" name="yscale" value="log"> Log</label>
@@ -86,11 +99,60 @@ const METRIC_INFO = {
   f_v:  { label: 'F/V — effective fee (%)',  tickFmt: '.4f',  suffix: '%' },
 };
 
+// Rolling mean (window = N days). Returns array of same length, leading nulls
+// until enough data, then trailing N-day average.
+function rollingMean(arr, window) {
+  const out = new Array(arr.length).fill(null);
+  for (let i = 0; i < arr.length; i++) {
+    if (i < window - 1) continue;
+    const slice = arr.slice(i - window + 1, i + 1).filter(v => v !== null && !isNaN(v));
+    if (slice.length === 0) continue;
+    out[i] = slice.reduce((a, b) => a + b, 0) / slice.length;
+  }
+  return out;
+}
+
+// Day-over-day absolute delta. out[i] = arr[i] - arr[i-1]
+function deltaAbs(arr) {
+  const out = [null];
+  for (let i = 1; i < arr.length; i++) {
+    const prev = arr[i-1], cur = arr[i];
+    if (prev === null || cur === null || isNaN(prev) || isNaN(cur)) out.push(null);
+    else out.push(cur - prev);
+  }
+  return out;
+}
+
+// Day-over-day percent change. out[i] = (arr[i] - arr[i-1]) / arr[i-1] × 100
+function deltaPct(arr) {
+  const out = [null];
+  for (let i = 1; i < arr.length; i++) {
+    const prev = arr[i-1], cur = arr[i];
+    if (prev === null || prev === 0 || cur === null || isNaN(prev) || isNaN(cur)) out.push(null);
+    else out.push(((cur - prev) / prev) * 100);
+  }
+  return out;
+}
+
 function renderAll() {
   const metric = document.querySelector('input[name="metric"]:checked').value;
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+  const smooth = document.querySelector('input[name="smooth"]:checked').value;
   const yscale = document.querySelector('input[name="yscale"]:checked').value;
   const showParams = document.getElementById('show-params').checked;
   const info = METRIC_INFO[metric];
+
+  // Customize hover format based on mode
+  let displayPrefix = info.prefix || '';
+  let displaySuffix = info.suffix || '';
+  let displayFmt = info.tickFmt;
+  let yTitle = info.label;
+  if (mode === 'delta_pct') {
+    displayPrefix = ''; displaySuffix = '%'; displayFmt = '+,.1f'; yTitle = info.label + ' — daily % change';
+  } else if (mode === 'delta_abs') {
+    displayFmt = info.prefix ? '+,.0f' : '+,.4f';
+    yTitle = info.label + ' — daily Δ';
+  }
 
   const container = document.getElementById('charts');
   container.innerHTML = '';
@@ -102,7 +164,6 @@ function renderAll() {
     const panel = document.createElement('div');
     panel.className = 'pool';
 
-    // Most recent param config for header
     const latestParams = d.params.length ? d.params[d.params.length - 1] : null;
     const paramsLine = latestParams
       ? `Current params (last changed ${latestParams.date}): base=${latestParams.base}  a1=${latestParams.a1}  a2=${latestParams.a2}  b1=${latestParams.b1}  b2=${latestParams.b2}  g1=${latestParams.g1}  g2=${latestParams.g2}  max=${latestParams.max} pips`
@@ -115,16 +176,49 @@ function renderAll() {
     `;
     container.appendChild(panel);
 
-    const yValues = d[metric];
+    // Step 1: transform raw values per mode
+    let yValues = d[metric];
+    if (mode === 'delta_abs') yValues = deltaAbs(yValues);
+    else if (mode === 'delta_pct') yValues = deltaPct(yValues);
 
-    const traces = [{
-      x: d.dates,
-      y: yValues,
-      mode: 'lines',
-      line: { color, width: 2 },
-      name: pair,
-      hovertemplate: (info.prefix || '') + '%{y:' + info.tickFmt + '}' + (info.suffix || '') + '<extra></extra>',
-    }];
+    // Step 2: compute smoothing variants
+    const ma7 = rollingMean(yValues, 7);
+    const ma14 = rollingMean(yValues, 14);
+
+    const hoverTemplate = displayPrefix + '%{y:' + displayFmt + '}' + displaySuffix + '<extra></extra>';
+
+    const traces = [];
+    // Raw line (unless hiding for "ma7only")
+    if (smooth !== 'ma7only') {
+      traces.push({
+        x: d.dates, y: yValues, mode: 'lines',
+        line: { color, width: 1.2 },
+        opacity: smooth === 'raw' ? 1 : 0.35,
+        name: 'Daily', hovertemplate: hoverTemplate,
+      });
+    }
+    if (smooth === 'ma7' || smooth === 'ma7only') {
+      traces.push({
+        x: d.dates, y: ma7, mode: 'lines',
+        line: { color, width: 2.5 },
+        name: '7-day MA', hovertemplate: hoverTemplate,
+      });
+    } else if (smooth === 'ma14') {
+      traces.push({
+        x: d.dates, y: ma14, mode: 'lines',
+        line: { color, width: 2.5 },
+        name: '14-day MA', hovertemplate: hoverTemplate,
+      });
+    }
+
+    // Zero baseline for delta modes
+    if (mode !== 'absolute') {
+      traces.push({
+        x: d.dates, y: d.dates.map(() => 0), mode: 'lines',
+        line: { color: 'rgba(255,255,255,0.2)', width: 1, dash: 'dot' },
+        name: 'zero', showlegend: false, hoverinfo: 'skip',
+      });
+    }
 
     // Param change vertical lines as shapes + annotations
     const shapes = [];
@@ -156,13 +250,13 @@ function renderAll() {
         color: '#9aa4b2',
       },
       yaxis: {
-        type: yscale,
-        title: { text: info.label, font: { size: 11, color: '#9aa4b2' } },
+        type: (mode !== 'absolute' && yscale === 'log') ? 'linear' : yscale,  // log + signed delta breaks
+        title: { text: yTitle, font: { size: 11, color: '#9aa4b2' } },
         gridcolor: 'rgba(255,255,255,0.07)',
         color: '#9aa4b2',
-        tickprefix: info.prefix || '',
-        ticksuffix: info.suffix || '',
-        tickformat: info.tickFmt,
+        tickprefix: displayPrefix,
+        ticksuffix: displaySuffix,
+        tickformat: displayFmt.startsWith('+') ? displayFmt.slice(1) : displayFmt,  // for axis ticks, no + sign
       },
       shapes,
       annotations,
@@ -177,7 +271,7 @@ function renderAll() {
   }
 }
 
-document.querySelectorAll('input[name="metric"], input[name="yscale"], #show-params').forEach(el =>
+document.querySelectorAll('input[name="metric"], input[name="mode"], input[name="smooth"], input[name="yscale"], #show-params').forEach(el =>
   el.addEventListener('change', renderAll)
 );
 renderAll();
