@@ -314,11 +314,10 @@ function renderAll() {
       displayModeBar: true, scrollZoom: true, responsive: true,
       displaylogo: false, modeBarButtonsToRemove: ['lasso2d', 'select2d'],
     }).then(gd => {
-      // Sync x-axis range across all pool charts when ANY chart's range changes
-      let syncing = false;
+      // Sync x-axis range across all pool charts. Use a SHARED global flag so that
+      // programmatic relayouts on sibling charts don't recursively re-trigger sync.
       gd.on('plotly_relayout', ev => {
-        if (syncing) return;
-        // Detect any xaxis range change (from rangeselector, slider, box zoom, or autoscale)
+        if (window.__rangeSyncing) return;
         let newRange = null;
         if (ev['xaxis.range']) {
           newRange = ev['xaxis.range'];
@@ -328,12 +327,13 @@ function renderAll() {
           newRange = 'autorange';
         }
         if (!newRange) return;
-        syncing = true;
+        window.__rangeSyncing = true;
         const others = PAIRS.map(p => `chart-${p.replace('/','-')}`).filter(id => id !== divId);
         const update = newRange === 'autorange'
           ? { 'xaxis.autorange': true }
           : { 'xaxis.range': newRange, 'xaxis.autorange': false };
-        Promise.all(others.map(id => Plotly.relayout(id, update))).finally(() => { syncing = false; });
+        Promise.all(others.map(id => Plotly.relayout(id, update)))
+          .finally(() => { window.__rangeSyncing = false; });
       });
     });
   }
