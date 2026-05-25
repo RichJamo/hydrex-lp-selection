@@ -394,9 +394,32 @@ function renderAll() {{
       }},
     }};
 
-    Plotly.newPlot(`chart-${{pair.replace('/','-')}}`, traces, layout, {{
+    const divId = `chart-${{pair.replace('/','-')}}`;
+    Plotly.newPlot(divId, traces, layout, {{
       displayModeBar: true, scrollZoom: true, responsive: true,
       displaylogo: false, modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+    }}).then(gd => {{
+      // Sync x-axis range across all pool charts when ANY chart's range changes
+      let syncing = false;
+      gd.on('plotly_relayout', ev => {{
+        if (syncing) return;
+        // Detect any xaxis range change (from rangeselector, slider, box zoom, or autoscale)
+        let newRange = null;
+        if (ev['xaxis.range']) {{
+          newRange = ev['xaxis.range'];
+        }} else if (ev['xaxis.range[0]'] !== undefined && ev['xaxis.range[1]'] !== undefined) {{
+          newRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
+        }} else if (ev['xaxis.autorange'] === true) {{
+          newRange = 'autorange';
+        }}
+        if (!newRange) return;
+        syncing = true;
+        const others = PAIRS.map(p => `chart-${{p.replace('/','-')}}`).filter(id => id !== divId);
+        const update = newRange === 'autorange'
+          ? {{ 'xaxis.autorange': true }}
+          : {{ 'xaxis.range': newRange, 'xaxis.autorange': false }};
+        Promise.all(others.map(id => Plotly.relayout(id, update))).finally(() => {{ syncing = false; }});
+      }});
     }});
   }}
 }}
