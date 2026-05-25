@@ -118,6 +118,19 @@ def main():
     .pool-params {{ font-size: 11px; color: var(--muted); margin-bottom: 10px;
                      font-family: ui-monospace, monospace; }}
     .chart {{ min-height: 320px; }}
+    .impact-summary {{ margin-top: 14px; font-size: 12px; }}
+    .impact-summary table {{ width: 100%; border-collapse: collapse; }}
+    .impact-summary th, .impact-summary td {{
+      padding: 6px 10px; text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-family: ui-monospace, monospace;
+    }}
+    .impact-summary th {{ color: var(--muted); font-weight: 600; font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.5px; }}
+    .impact-summary td.delta-pos {{ color: #3fb950; }}
+    .impact-summary td.delta-neg {{ color: #f85149; }}
+    .impact-summary td.delta-neutral {{ color: var(--muted); }}
+    .impact-summary .empty {{ color: var(--muted); font-style: italic; padding: 8px 0; }}
     a {{ color: var(--accent); }}
   </style>
 </head>
@@ -219,6 +232,112 @@ function deltaPct(arr) {{
   return out;
 }}
 
+// Compute mean of `values` whose dates fall in [startDate, endDate) (half-open)
+function windowMean(dates, values, startDate, endDate) {{
+  let sum = 0, n = 0;
+  for (let i = 0; i < dates.length; i++) {{
+    if (dates[i] >= startDate && dates[i] < endDate) {{
+      const v = values[i];
+      if (v !== null && v !== undefined && !isNaN(v)) {{ sum += v; n++; }}
+    }}
+  }}
+  return n > 0 ? sum / n : null;
+}}
+
+function addDays(dateStr, n) {{
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0,10);
+}}
+
+function formatMetric(v, info) {{
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  const prefix = info.prefix || '';
+  const suffix = info.suffix || '';
+  // Pick precision based on magnitude
+  let formatted;
+  if (suffix === '%') {{
+    formatted = Math.abs(v) >= 1 ? v.toFixed(2) : v.toFixed(4);
+  }} else if (Math.abs(v) >= 1000) {{
+    formatted = Math.round(v).toLocaleString();
+  }} else {{
+    formatted = v.toFixed(2);
+  }}
+  return prefix + formatted + suffix;
+}}
+
+// Render the impact-summary table for a single pool: before/after metric averages
+// across 7-day windows on either side of each param change date.
+function renderImpactTable(pair, d, metric, info) {{
+  const elem = document.getElementById(`impact-${{pair.replace('/','-')}}`);
+  if (!elem) return;
+  if (!d.params || d.params.length === 0) {{
+    elem.innerHTML = '<div class="empty">No fee-config changes recorded for this pool.</div>';
+    return;
+  }}
+
+  const yValues = d[metric];
+  const rows = d.params.map((p, idx) => {{
+    const date = p.date;
+    const before = windowMean(d.dates, yValues, addDays(date, -7), date);
+    const after  = windowMean(d.dates, yValues, date, addDays(date, 7));
+    let delta = null, pct = null, verdict = '—', deltaClass = 'delta-neutral';
+    if (before !== null && after !== null) {{
+      delta = after - before;
+      pct = before !== 0 ? (delta / Math.abs(before)) * 100 : null;
+      // Higher F/T, F/V, V/T, TVL, Vol, Fees = better. (All metrics are "more is better" for the protocol.)
+      const threshold = 5;  // ignore moves under 5%
+      if (pct !== null && pct > threshold)       {{ verdict = '↑ helped';  deltaClass = 'delta-pos'; }}
+      else if (pct !== null && pct < -threshold) {{ verdict = '↓ hurt';    deltaClass = 'delta-neg'; }}
+      else                                         {{ verdict = '≈ flat';   deltaClass = 'delta-neutral'; }}
+    }}
+
+    // Summarize what changed vs previous params
+    let changeSummary = `base=${{p.base}} a1=${{p.a1}} a2=${{p.a2}} b1=${{p.b1}} max=${{p.max}}`;
+    if (idx > 0) {{
+      const prev = d.params[idx - 1];
+      const diffs = [];
+      if (p.base !== prev.base) diffs.push(`base ${{prev.base}}→${{p.base}}`);
+      if (p.a1 !== prev.a1)     diffs.push(`a1 ${{prev.a1}}→${{p.a1}}`);
+      if (p.a2 !== prev.a2)     diffs.push(`a2 ${{prev.a2}}→${{p.a2}}`);
+      if (p.b1 !== prev.b1)     diffs.push(`b1 ${{prev.b1}}→${{p.b1}}`);
+      if (p.max !== prev.max)   diffs.push(`max ${{prev.max}}→${{p.max}}`);
+      if (diffs.length) changeSummary = diffs.join(', ');
+    }}
+
+    return `
+      <tr>
+        <td>${{date}}</td>
+        <td style="color:var(--muted)">${{changeSummary}}</td>
+        <td>${{formatMetric(before, info)}}</td>
+        <td>${{formatMetric(after, info)}}</td>
+        <td class="${{deltaClass}}">${{pct === null ? '—' : (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%'}}</td>
+        <td class="${{deltaClass}}">${{verdict}}</td>
+      </tr>
+    `;
+  }}).join('');
+
+  elem.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Change date</th>
+          <th>What changed</th>
+          <th>${{info.label}} — 7d before</th>
+          <th>7d after</th>
+          <th>Δ%</th>
+          <th>Verdict</th>
+        </tr>
+      </thead>
+      <tbody>${{rows}}</tbody>
+    </table>
+    <div style="color:var(--muted); font-size:10px; margin-top:6px; font-family:inherit">
+      Compares 7-day window average of the currently-selected metric before vs after each change.
+      Changes where the post-change window is still within 7 days will be incomplete.
+    </div>
+  `;
+}}
+
 function renderAll() {{
   const metric = document.querySelector('input[name="metric"]:checked').value;
   const mode = document.querySelector('input[name="mode"]:checked').value;
@@ -258,8 +377,12 @@ function renderAll() {{
       <div class="pool-title" style="color:${{color}}">${{pair}}</div>
       <div class="pool-params">${{paramsLine}}</div>
       <div class="chart" id="chart-${{pair.replace('/','-')}}"></div>
+      <div class="impact-summary" id="impact-${{pair.replace('/','-')}}"></div>
     `;
     container.appendChild(panel);
+
+    // Render the impact summary table (uses raw daily values, not transformed)
+    renderImpactTable(pair, d, metric, METRIC_INFO[metric]);
 
     // Step 1: transform raw values per mode
     let yValues = d[metric];
