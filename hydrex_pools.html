@@ -314,8 +314,35 @@ function renderAll() {
       displayModeBar: true, scrollZoom: true, responsive: true,
       displaylogo: false, modeBarButtonsToRemove: ['lasso2d', 'select2d'],
     }).then(gd => {
-      // Sync x-axis range across all pool charts. Use a SHARED global flag so that
-      // programmatic relayouts on sibling charts don't recursively re-trigger sync.
+      // Compute the y-range from the data points visible inside the current x-range.
+      // Falls back to autorange if the window contains no valid points.
+      function computeYRange(graphDiv, xRange) {
+        if (!xRange || xRange === 'autorange') return null;
+        const xMin = new Date(xRange[0]).getTime();
+        const xMax = new Date(xRange[1]).getTime();
+        let yMin = Infinity, yMax = -Infinity;
+        (graphDiv.data || []).forEach(tr => {
+          // Skip the dashed-zero baseline and any helper trace
+          if (tr.name === 'zero' || tr.hoverinfo === 'skip') return;
+          if (!tr.x || !tr.y) return;
+          for (let i = 0; i < tr.x.length; i++) {
+            const ts = new Date(tr.x[i]).getTime();
+            if (ts < xMin || ts > xMax) continue;
+            const v = tr.y[i];
+            if (v === null || v === undefined || isNaN(v)) continue;
+            if (v < yMin) yMin = v;
+            if (v > yMax) yMax = v;
+          }
+        });
+        if (!isFinite(yMin) || !isFinite(yMax)) return null;
+        // Add 8% headroom so the line doesn't touch the edges
+        const pad = (yMax - yMin) * 0.08 || Math.abs(yMax) * 0.1 || 0.0001;
+        return [yMin - pad, yMax + pad];
+      }
+
+      // Sync x-axis range across all pool charts AND rescale each chart's y-axis
+      // to the visible window. Uses a SHARED global flag so programmatic relayouts
+      // on sibling charts don't recursively re-trigger sync.
       gd.on('plotly_relayout', ev => {
         if (window.__rangeSyncing) return;
         let newRange = null;
@@ -328,12 +355,26 @@ function renderAll() {
         }
         if (!newRange) return;
         window.__rangeSyncing = true;
-        const others = PAIRS.map(p => `chart-${p.replace('/','-')}`).filter(id => id !== divId);
-        const update = newRange === 'autorange'
-          ? { 'xaxis.autorange': true }
-          : { 'xaxis.range': newRange, 'xaxis.autorange': false };
-        Promise.all(others.map(id => Plotly.relayout(id, update)))
-          .finally(() => { window.__rangeSyncing = false; });
+
+        const allIds = PAIRS.map(p => `chart-${p.replace('/','-')}`);
+        const tasks = allIds.map(id => {
+          const targetGd = document.getElementById(id);
+          let update;
+          if (newRange === 'autorange') {
+            update = { 'xaxis.autorange': true, 'yaxis.autorange': true };
+          } else {
+            update = { 'xaxis.range': newRange, 'xaxis.autorange': false };
+            const yRange = computeYRange(targetGd, newRange);
+            if (yRange) {
+              update['yaxis.range'] = yRange;
+              update['yaxis.autorange'] = false;
+            } else {
+              update['yaxis.autorange'] = true;
+            }
+          }
+          return Plotly.relayout(id, update);
+        });
+        Promise.all(tasks).finally(() => { window.__rangeSyncing = false; });
       });
     });
   }
