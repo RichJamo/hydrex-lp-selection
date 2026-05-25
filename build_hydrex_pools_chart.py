@@ -359,6 +359,14 @@ function renderAll() {{
             font: {{ color: '#e7ecf2', size: 11 }},
             x: 0, y: 1.12, xanchor: 'left', yanchor: 'bottom',
           }},
+          rangeslider: {{
+            visible: true,
+            thickness: 0.06,
+            bgcolor: '#1b1f27',
+            bordercolor: '#262a33',
+            // Always show full dataset range in the slider, regardless of zoom
+            range: [minDate, maxDate],
+          }},
         }};
       }})(),
       yaxis: {{
@@ -373,6 +381,7 @@ function renderAll() {{
       shapes,
       annotations,
       hovermode: 'x unified',
+      dragmode: 'zoom',  // click+drag on chart to box-zoom into any range
       showlegend: smooth !== 'raw',
       legend: {{
         orientation: 'h',
