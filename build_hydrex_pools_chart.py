@@ -330,26 +330,37 @@ function renderAll() {{
       paper_bgcolor: '#171a21',
       plot_bgcolor: '#171a21',
       font: {{ color: '#e7ecf2' }},
-      xaxis: {{
-        gridcolor: 'rgba(255,255,255,0.04)',
-        color: '#9aa4b2',
-        type: 'date',
-        rangeselector: {{
-          buttons: [
-            {{ count: 7,  label: '7D',  step: 'day',   stepmode: 'backward' }},
-            {{ count: 30, label: '30D', step: 'day',   stepmode: 'backward' }},
-            {{ count: 90, label: '90D', step: 'day',   stepmode: 'backward' }},
-            {{ step: 'year', stepmode: 'todate', label: 'YTD' }},
-            {{ step: 'all', label: 'All' }},
-          ],
-          bgcolor: '#1b1f27',
-          activecolor: '#3a8dff',
-          bordercolor: '#262a33',
-          font: {{ color: '#e7ecf2', size: 11 }},
-          x: 0, y: 1.12, xanchor: 'left', yanchor: 'bottom',
-        }},
-        rangeslider: {{ visible: true, thickness: 0.05, bgcolor: '#1b1f27', bordercolor: '#262a33' }},
-      }},
+      xaxis: (function() {{
+        // Compute the max date in this pool's series so range buttons anchor correctly
+        const maxDate = d.dates[d.dates.length - 1];
+        const maxMs = new Date(maxDate + 'T00:00:00Z').getTime();
+        const minDate = d.dates[0];
+        const dayMs = 24 * 60 * 60 * 1000;
+        function backDays(n) {{
+          return [new Date(maxMs - n * dayMs).toISOString().slice(0,10), maxDate];
+        }}
+        return {{
+          gridcolor: 'rgba(255,255,255,0.04)',
+          color: '#9aa4b2',
+          type: 'date',
+          autorange: false,
+          range: backDays(30),  // default view = last 30 days
+          rangeselector: {{
+            buttons: [
+              {{ label: '7D',  method: 'relayout', args: [{{'xaxis.range': backDays(7) }}]  }},
+              {{ label: '30D', method: 'relayout', args: [{{'xaxis.range': backDays(30) }}] }},
+              {{ label: '90D', method: 'relayout', args: [{{'xaxis.range': backDays(90) }}] }},
+              {{ label: 'YTD', method: 'relayout', args: [{{'xaxis.range': [maxDate.slice(0,4) + '-01-01', maxDate] }}] }},
+              {{ label: 'All', method: 'relayout', args: [{{'xaxis.range': [minDate, maxDate] }}] }},
+            ],
+            bgcolor: '#1b1f27',
+            activecolor: '#3a8dff',
+            bordercolor: '#262a33',
+            font: {{ color: '#e7ecf2', size: 11 }},
+            x: 0, y: 1.12, xanchor: 'left', yanchor: 'bottom',
+          }},
+        }};
+      }})(),
       yaxis: {{
         type: (mode !== 'absolute' && yscale === 'log') ? 'linear' : yscale,  // log + signed delta breaks
         title: {{ text: yTitle, font: {{ size: 11, color: '#9aa4b2' }} }},
