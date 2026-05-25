@@ -333,6 +333,22 @@ function renderAll() {{
       xaxis: {{
         gridcolor: 'rgba(255,255,255,0.04)',
         color: '#9aa4b2',
+        type: 'date',
+        rangeselector: {{
+          buttons: [
+            {{ count: 7,  label: '7D',  step: 'day',   stepmode: 'backward' }},
+            {{ count: 30, label: '30D', step: 'day',   stepmode: 'backward' }},
+            {{ count: 90, label: '90D', step: 'day',   stepmode: 'backward' }},
+            {{ step: 'year', stepmode: 'todate', label: 'YTD' }},
+            {{ step: 'all', label: 'All' }},
+          ],
+          bgcolor: '#1b1f27',
+          activecolor: '#3a8dff',
+          bordercolor: '#262a33',
+          font: {{ color: '#e7ecf2', size: 11 }},
+          x: 0, y: 1.12, xanchor: 'left', yanchor: 'bottom',
+        }},
+        rangeslider: {{ visible: true, thickness: 0.05, bgcolor: '#1b1f27', bordercolor: '#262a33' }},
       }},
       yaxis: {{
         type: (mode !== 'absolute' && yscale === 'log') ? 'linear' : yscale,  // log + signed delta breaks
