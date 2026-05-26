@@ -145,6 +145,14 @@
         {
           "pair": "DRB/WETH",
           "pool_address": "0xa9a12101beddf0950c65c32a915ae21db002623d"
+        },
+        {
+          "pair": "DIEM/USDC",
+          "pool_address": "0xe6D1dABdDDb884c20C0eFF3c50FBa364e6C14399"
+        },
+        {
+          "pair": "HOME/USDC",
+          "pool_address": "0x3343646E7d40099F1456405859F6c28A40423BbD"
         }
       ]
     }
