@@ -81,6 +81,7 @@
         <option value="vol_tvl">Volume / TVL (turnover)</option>
         <option value="tier_ft_overlay">Fee Tier vs F/T (overlay)</option>
         <option value="tier_ft_scatter">Tier ratio × F/T ratio (scatter)</option>
+        <option value="ft_gap">Aero F/T advantage (×)</option>
       </select>
       <div class="divider"></div>
       <h3>Fee Tiers</h3>
@@ -200,6 +201,7 @@
       vol_tvl:  { label: 'Volume / TVL (×)',  unit: 'x', calc: r => r.vol / r.tvl },
       tier_ft_overlay: { label: 'Fee Tier vs F/T (dual axis)', unit: '%', isDualAxis: true,
                          calc: r => (r.fees / r.tvl) * 100 },  // primary axis = F/T
+      ft_gap: { label: 'Aero F/T advantage (×)', unit: 'x' },  // special-cased in render()
     };
 
     // Nominal fee tiers in % (from sidebar). For dual-axis "Fee Tier vs F/T" view.
@@ -511,6 +513,67 @@
                   }
                 },
                 min: yMin, max: yMax,
+              },
+            }
+          }
+        });
+        return;
+      }
+
+      // Special-case: Aero F/T advantage as a multiple (Aero F/T ÷ Hydrex F/T), one line per pool
+      if (metric === 'ft_gap') {
+        const wrap = document.createElement('div');
+        wrap.className = 'chart-wrap';
+        wrap.innerHTML = `
+          <div class="chart-title">Aero F/T advantage (×) — how many times more fees-per-TVL Aero captures vs Hydrex</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">
+            Higher = Aero further ahead. <strong>1× = parity</strong> (dashed line). Lower is better for Hydrex.
+          </div>
+          <div style="height:460px"><canvas></canvas></div>
+        `;
+        container.appendChild(wrap);
+        const canvas = wrap.querySelector('canvas');
+
+        const datasets = activePairs.map(p => {
+          const byA = {}; (RAW.Aero[p.name] || []).forEach(r => byA[r.e] = r);
+          const byH = {}; (RAW.Hydrex[p.name] || []).forEach(r => byH[r.e] = r);
+          const data = epochs.map(e => {
+            const ra = byA[e], rh = byH[e];
+            if (!ra || !rh || !ra.tvl || !rh.tvl || !ra.fees || !rh.fees) return null;
+            const aFt = (ra.fees / ra.tvl) * 100;
+            const hFt = (rh.fees / rh.tvl) * 100;
+            return hFt > 0 ? aFt / hFt : null;
+          });
+          return { label: p.name, data, borderColor: p.color, backgroundColor: p.color,
+                   borderWidth: 2.5, pointRadius: 3, tension: 0.25, spanGaps: true };
+        });
+
+        // Parity reference line at 1×
+        datasets.push({
+          label: '1× (parity)', data: epochs.map(() => 1),
+          borderColor: 'rgba(255,255,255,0.3)', borderDash: [4, 4], borderWidth: 1,
+          pointRadius: 0, fill: false,
+        });
+
+        charts.ftgap = new Chart(canvas, {
+          type: 'line',
+          data: { labels: epochs.map(e => `${e}\n${epochDates[e]}`), datasets },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'nearest', axis: 'x', intersect: false },
+            plugins: {
+              legend: { display: true, labels: { color: '#e7ecf2', font: { size: 11 } } },
+              tooltip: {
+                backgroundColor: '#0f1115', borderColor: '#262a33', borderWidth: 1,
+                callbacks: { label: ctx => ctx.parsed.y === null ? null : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}×` }
+              }
+            },
+            scales: {
+              x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9aa4b2', font: { size: 10 } } },
+              y: {
+                title: { display: true, text: 'Aero F/T ÷ Hydrex F/T (×)', color: '#9aa4b2', font: { size: 11 } },
+                grid: { color: 'rgba(255,255,255,0.07)' }, ticks: { color: '#9aa4b2', callback: v => v + '×' },
+                beginAtZero: true,
               },
             }
           }
