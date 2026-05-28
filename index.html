@@ -204,6 +204,22 @@
       ft_gap: { label: 'Aero F/T advantage (×)', unit: 'x' },  // special-cased in render()
     };
 
+    // Fee-config changes per pool, mapped to the epoch they landed in.
+    // Source: data/hydrex_param_changes.csv (epoch = the Thu-Wed week containing the change date)
+    const CONFIG_CHANGES = [
+      { epoch: 132, pair: 'WETH/cbXRP', date: '3/05' },
+      { epoch: 132, pair: 'WETH/cbXRP', date: '3/10' },
+      { epoch: 133, pair: 'WETH/EURC',  date: '3/12' },
+      { epoch: 135, pair: 'WETH/cbXRP', date: '3/26' },
+      { epoch: 137, pair: 'WETH/USDC',  date: '4/10' },
+      { epoch: 139, pair: 'USDC/cbBTC', date: '4/23' },
+      { epoch: 139, pair: 'WETH/cbBTC', date: '4/23' },
+      { epoch: 142, pair: 'WETH/cbBTC', date: '5/19' },
+      { epoch: 142, pair: 'WETH/cbBTC', date: '5/20' },
+      { epoch: 143, pair: 'WETH/USDC',  date: '5/21' },
+      { epoch: 143, pair: 'USDC/cbBTC', date: '5/21' },
+    ];
+
     // Nominal fee tiers in % (from sidebar). For dual-axis "Fee Tier vs F/T" view.
     const NOMINAL_FEE_TIER = {
       'WETH/cbBTC': { Hydrex: 0.030, Aero: 0.040 },
@@ -555,8 +571,44 @@
           pointRadius: 0, fill: false,
         });
 
+        // Inline plugin: draw vertical config-change markers for active pools (pool-colored)
+        const configMarkerPlugin = {
+          id: 'configMarkers',
+          afterDatasetsDraw(chart) {
+            const xScale = chart.scales.x, yScale = chart.scales.y, ctx = chart.ctx;
+            const markers = CONFIG_CHANGES.filter(c => active.has(c.pair) && epochs.indexOf(c.epoch) >= 0);
+            // Track how many markers share each epoch so we can offset overlaps
+            const seenAtEpoch = {};
+            markers.forEach(m => {
+              const idx = epochs.indexOf(m.epoch);
+              const n = (seenAtEpoch[m.epoch] = (seenAtEpoch[m.epoch] || 0));
+              seenAtEpoch[m.epoch]++;
+              const x = xScale.getPixelForValue(idx) + n * 4;  // nudge overlapping lines
+              const color = (pairs.find(p => p.name === m.pair) || {}).color || '#fff';
+              ctx.save();
+              ctx.strokeStyle = color;
+              ctx.globalAlpha = 0.55;
+              ctx.setLineDash([4, 4]);
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.moveTo(x, yScale.top);
+              ctx.lineTo(x, yScale.bottom);
+              ctx.stroke();
+              // small date label near top
+              ctx.globalAlpha = 0.9;
+              ctx.setLineDash([]);
+              ctx.fillStyle = color;
+              ctx.font = '9px -apple-system, sans-serif';
+              ctx.textAlign = 'left';
+              ctx.fillText(m.date, x + 2, yScale.top + 10 + n * 11);
+              ctx.restore();
+            });
+          }
+        };
+
         charts.ftgap = new Chart(canvas, {
           type: 'line',
+          plugins: [configMarkerPlugin],
           data: { labels: epochs.map(e => `${e}\n${epochDates[e]}`), datasets },
           options: {
             responsive: true, maintainAspectRatio: false,
