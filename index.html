@@ -220,6 +220,9 @@
       { epoch: 143, pair: 'USDC/cbBTC', date: '5/21' },
     ];
 
+    // Aerodrome enabled initial fee + dynamic fees ecosystem-wide on Apr 7, 2026 (epoch 136 week).
+    const AERO_DYNAMIC_FEE = { epoch: 136, date: 'Apr 7' };
+
     // Nominal fee tiers in % (from sidebar). For dual-axis "Fee Tier vs F/T" view.
     const NOMINAL_FEE_TIER = {
       'WETH/cbBTC': { Hydrex: 0.030, Aero: 0.040 },
@@ -536,21 +539,10 @@
         return;
       }
 
-      // Special-case: Aero F/T advantage as a multiple (Aero F/T ÷ Hydrex F/T), one line per pool
+      // Special-case: Aero F/T advantage as a multiple (Aero F/T ÷ Hydrex F/T)
       if (metric === 'ft_gap') {
-        const wrap = document.createElement('div');
-        wrap.className = 'chart-wrap';
-        wrap.innerHTML = `
-          <div class="chart-title">Aero F/T advantage (×) — how many times more fees-per-TVL Aero captures vs Hydrex</div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">
-            Higher = Aero further ahead. <strong>1× = parity</strong> (dashed line). Lower is better for Hydrex.
-          </div>
-          <div style="height:460px"><canvas></canvas></div>
-        `;
-        container.appendChild(wrap);
-        const canvas = wrap.querySelector('canvas');
-
-        const datasets = activePairs.map(p => {
+        // Build the gap line for one pool
+        const gapDataset = (p) => {
           const byA = {}; (RAW.Aero[p.name] || []).forEach(r => byA[r.e] = r);
           const byH = {}; (RAW.Hydrex[p.name] || []).forEach(r => byH[r.e] = r);
           const data = epochs.map(e => {
@@ -562,74 +554,114 @@
           });
           return { label: p.name, data, borderColor: p.color, backgroundColor: p.color,
                    borderWidth: 2.5, pointRadius: 3, tension: 0.25, spanGaps: true };
-        });
-
-        // Parity reference line at 1×
-        datasets.push({
+        };
+        const parityDataset = () => ({
           label: '1× (parity)', data: epochs.map(() => 1),
           borderColor: 'rgba(255,255,255,0.3)', borderDash: [4, 4], borderWidth: 1,
           pointRadius: 0, fill: false,
         });
 
-        // Inline plugin: draw vertical config-change markers for active pools (pool-colored)
-        const configMarkerPlugin = {
+        // Marker plugin. If restrictPair given, only that pool's config changes are drawn.
+        const makeMarkerPlugin = (restrictPair) => ({
           id: 'configMarkers',
           afterDatasetsDraw(chart) {
             const xScale = chart.scales.x, yScale = chart.scales.y, ctx = chart.ctx;
-            const markers = CONFIG_CHANGES.filter(c => active.has(c.pair) && epochs.indexOf(c.epoch) >= 0);
-            // Track how many markers share each epoch so we can offset overlaps
+            // 1) Aerodrome dynamic-fee rollout — single neutral line across the chart
+            const aIdx = epochs.indexOf(AERO_DYNAMIC_FEE.epoch);
+            if (aIdx >= 0) {
+              const ax = xScale.getPixelForValue(aIdx);
+              ctx.save();
+              ctx.strokeStyle = '#ffd43b'; ctx.globalAlpha = 0.8; ctx.setLineDash([2, 2]); ctx.lineWidth = 2;
+              ctx.beginPath(); ctx.moveTo(ax, yScale.top); ctx.lineTo(ax, yScale.bottom); ctx.stroke();
+              ctx.globalAlpha = 1; ctx.setLineDash([]); ctx.fillStyle = '#ffd43b';
+              ctx.font = 'bold 9px -apple-system, sans-serif'; ctx.textAlign = 'center';
+              ctx.fillText('Aero dynamic fees', ax, yScale.bottom - 6);
+              ctx.restore();
+            }
+            // 2) Hydrex config changes — pool-colored dashed lines
+            const markers = CONFIG_CHANGES.filter(c =>
+              epochs.indexOf(c.epoch) >= 0 && (restrictPair ? c.pair === restrictPair : active.has(c.pair)));
             const seenAtEpoch = {};
             markers.forEach(m => {
               const idx = epochs.indexOf(m.epoch);
               const n = (seenAtEpoch[m.epoch] = (seenAtEpoch[m.epoch] || 0));
               seenAtEpoch[m.epoch]++;
-              const x = xScale.getPixelForValue(idx) + n * 4;  // nudge overlapping lines
+              const x = xScale.getPixelForValue(idx) + n * 4;
               const color = (pairs.find(p => p.name === m.pair) || {}).color || '#fff';
               ctx.save();
-              ctx.strokeStyle = color;
-              ctx.globalAlpha = 0.55;
-              ctx.setLineDash([4, 4]);
-              ctx.lineWidth = 1.5;
-              ctx.beginPath();
-              ctx.moveTo(x, yScale.top);
-              ctx.lineTo(x, yScale.bottom);
-              ctx.stroke();
-              // small date label near top
-              ctx.globalAlpha = 0.9;
-              ctx.setLineDash([]);
-              ctx.fillStyle = color;
-              ctx.font = '9px -apple-system, sans-serif';
-              ctx.textAlign = 'left';
+              ctx.strokeStyle = color; ctx.globalAlpha = 0.55; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.5;
+              ctx.beginPath(); ctx.moveTo(x, yScale.top); ctx.lineTo(x, yScale.bottom); ctx.stroke();
+              ctx.globalAlpha = 0.9; ctx.setLineDash([]); ctx.fillStyle = color;
+              ctx.font = '9px -apple-system, sans-serif'; ctx.textAlign = 'left';
               ctx.fillText(m.date, x + 2, yScale.top + 10 + n * 11);
               ctx.restore();
             });
           }
-        };
+        });
 
-        charts.ftgap = new Chart(canvas, {
-          type: 'line',
-          plugins: [configMarkerPlugin],
-          data: { labels: epochs.map(e => `${e}\n${epochDates[e]}`), datasets },
-          options: {
-            responsive: true, maintainAspectRatio: false,
-            interaction: { mode: 'nearest', axis: 'x', intersect: false },
-            plugins: {
-              legend: { display: true, labels: { color: '#e7ecf2', font: { size: 11 } } },
-              tooltip: {
-                backgroundColor: '#0f1115', borderColor: '#262a33', borderWidth: 1,
-                callbacks: { label: ctx => ctx.parsed.y === null ? null : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}×` }
-              }
-            },
-            scales: {
-              x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9aa4b2', font: { size: 10 } } },
-              y: {
-                title: { display: true, text: 'Aero F/T ÷ Hydrex F/T (×)', color: '#9aa4b2', font: { size: 11 } },
-                grid: { color: 'rgba(255,255,255,0.07)' }, ticks: { color: '#9aa4b2', callback: v => v + '×' },
-                beginAtZero: true,
-              },
+        const gapOptions = (showLegend) => ({
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'nearest', axis: 'x', intersect: false },
+          plugins: {
+            legend: { display: showLegend, labels: { color: '#e7ecf2', font: { size: 11 } } },
+            tooltip: {
+              backgroundColor: '#0f1115', borderColor: '#262a33', borderWidth: 1,
+              callbacks: { label: ctx => ctx.parsed.y === null ? null : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}×` }
             }
+          },
+          scales: {
+            x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9aa4b2', font: { size: 10 } } },
+            y: {
+              title: { display: true, text: 'Aero F/T ÷ Hydrex F/T (×)', color: '#9aa4b2', font: { size: 11 } },
+              grid: { color: 'rgba(255,255,255,0.07)' }, ticks: { color: '#9aa4b2', callback: v => v + '×' },
+              beginAtZero: true,
+            },
           }
         });
+
+        const headerNote = `
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">
+            Higher = Aero further ahead. <strong>1× = parity</strong>. Lower is better for Hydrex.
+            <span style="color:#ffd43b">Gold line</span> = Aero dynamic fees enabled (Apr 7). Pool-colored dashed lines = Hydrex config changes.
+          </div>`;
+
+        if (view === 'grid') {
+          const titleEl = document.createElement('div');
+          titleEl.className = 'chart-title';
+          titleEl.innerHTML = `Aero F/T advantage (×) — per pool ${headerNote}`;
+          container.appendChild(titleEl);
+          const grid = document.createElement('div');
+          grid.className = 'grid-layout' + (activePairs.length === 1 ? ' single' : '');
+          container.appendChild(grid);
+          activePairs.forEach(p => {
+            const panel = document.createElement('div');
+            panel.className = 'grid-panel';
+            panel.innerHTML = `<h4 style="color:${p.color}">${p.name} — Aero F/T advantage (×)</h4><canvas></canvas>`;
+            grid.appendChild(panel);
+            charts[p.name] = new Chart(panel.querySelector('canvas'), {
+              type: 'line',
+              plugins: [makeMarkerPlugin(p.name)],
+              data: { labels: epochs.map(e => `${e}\n${epochDates[e]}`), datasets: [gapDataset(p), parityDataset()] },
+              options: gapOptions(false),
+            });
+          });
+        } else {
+          const wrap = document.createElement('div');
+          wrap.className = 'chart-wrap';
+          wrap.innerHTML = `
+            <div class="chart-title">Aero F/T advantage (×) — how many times more fees-per-TVL Aero captures vs Hydrex</div>
+            ${headerNote}
+            <div style="height:460px"><canvas></canvas></div>`;
+          container.appendChild(wrap);
+          const datasets = activePairs.map(gapDataset);
+          datasets.push(parityDataset());
+          charts.ftgap = new Chart(wrap.querySelector('canvas'), {
+            type: 'line',
+            plugins: [makeMarkerPlugin(null)],
+            data: { labels: epochs.map(e => `${e}\n${epochDates[e]}`), datasets },
+            options: gapOptions(true),
+          });
+        }
         return;
       }
 
