@@ -2,9 +2,10 @@ name: Weekly Bootstrap LP Tracker
 
 on:
   schedule:
-    # 23:59 UTC every Wednesday — just before the Thu epoch flip.
-    # weekly_bootstrap_update.py auto-selects the closing epoch (with 24h grace).
-    - cron: '59 23 * * 3'
+    # 02:00 UTC every Thursday — ~2h AFTER the epoch flip, so the just-closed
+    # epoch has final fees/volume and finalized incentive distribution.
+    # weekly_bootstrap_update.py auto-selects the just-closed epoch via its 24h grace window.
+    - cron: '0 2 * * 4'
   workflow_dispatch:  # manual trigger from GitHub UI
 
 permissions:
