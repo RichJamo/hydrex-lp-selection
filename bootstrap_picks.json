@@ -279,6 +279,26 @@
         {
           "pair": "HOME/USDC",
           "pool_address": "0x3343646E7d40099F1456405859F6c28A40423BbD"
+        },
+        {
+          "pair": "AUKI/USDC",
+          "pool_address": "0x3c709ea8105174964a45ca913dc948f2b7477b66"
+        },
+        {
+          "pair": "FUN/WETH",
+          "pool_address": "0xbcbc4c1428632a176d4cbe0b7b891bf4ee6b3e09"
+        },
+        {
+          "pair": "OVPP/USDC",
+          "pool_address": "0x8857358a26254f8a1100434225495e633d496950"
+        },
+        {
+          "pair": "UP/WETH",
+          "pool_address": "0x1110d6aa4fd324f2836d618609105bb8935bbf4a"
+        },
+        {
+          "pair": "BASEDAI/USDC",
+          "pool_address": "0x8281833536a41337e2c9450a0277416049514088"
         }
       ]
     }
