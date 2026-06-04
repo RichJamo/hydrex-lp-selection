@@ -262,7 +262,11 @@ def render_dashboard():
 <div class="footer">Updated weekly. <a href="data/bootstrap_tracker.csv" download style="color:var(--accent)">↓ Download CSV</a></div>
 
 <script>
-const ROWS = {data_json};
+// Discontinued pools — kept in the CSV for history, but hidden from the dashboard.
+// Add a pair here to drop it from the legend/charts/table without deleting its data.
+const EXCLUDED_PAIRS = new Set(['SOSO/USDC','MAG7.ssi/USDC','cbMEGA/WETH','deSPXA/USDC']);
+const ALL_ROWS = {data_json};
+const ROWS = ALL_ROWS.filter(r => !EXCLUDED_PAIRS.has(r.pair));
 
 const POOL_COLORS = ['#58a6ff','#3fb950','#d29922','#bc8cff','#ff7b72','#f85149','#39d4cf','#ff9f43','#ff6b9d','#a5d6ff'];
 
