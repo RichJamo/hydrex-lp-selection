@@ -1,0 +1,61 @@
+{
+  "_comment": "Config for the Hydrex LP selection pipeline. Tune thresholds and scoring weights here without touching code.",
+
+  "chain": "base",
+
+  "candidate_filters": {
+    "_comment": "Agreed in the Jun 9 2026 Rich<>Austin meeting: strip meme coins and illiquid junk.",
+    "min_liquidity_usd": 50000,
+    "min_market_cap_usd": 1000000,
+    "exclude_quote_symbols": [],
+    "max_pool_age_days_for_new_bucket": 21
+  },
+
+  "discovery": {
+    "_comment": "DexScreener has no 'all pairs on a chain' endpoint. We discover via these sources, then filter to chain==base and dedupe by pairAddress.",
+    "use_trending_metas": true,
+    "use_latest_token_profiles": true,
+    "use_top_boosts": true,
+    "seed_search_queries": ["WETH base", "USDC base", "cbBTC base"],
+    "seed_token_addresses": []
+  },
+
+  "fee_enrich": {
+    "_comment": "Base RPC used for on-chain fee-tier reads. Override with env BASE_RPC_URL. Algebra pools are read via globalState().lastFee; Uniswap/Aerodrome-style via fee().",
+    "base_rpc_url_env": "BASE_RPC_URL",
+    "default_base_rpc_url": "https://mainnet.base.org"
+  },
+
+  "scoring": {
+    "_comment": "Transparent weighted score (phase 1). Weights calibrated from Aerodrome proxy ML (14k pool-epochs, ROC-AUC 0.682). Each feature is normalized 0-1 then weighted; weights need not sum to 1.",
+    "weights": {
+      "est_fees_per_day_usd": 0.30,
+      "fees_per_tvl_ratio":   0.28,
+      "vol_tvl_24h":          0.18,
+      "low_tvl_perf":         0.12,
+      "pair_type_score":      0.07,
+      "newness_bonus":        0.03,
+      "buy_sell_balance":     0.02
+    },
+    "_weights_rationale": "low_tvl_perf replaces primary_lp_share — Aerodrome proxy shows which pairs stay profitable at bootstrap-scale TVL, which is the actual Hydrex launch condition. vol_tvl_24h weight raised to reflect its importance in the retrospective backtest (HOME/AORA/NOCK all had >4x daily turnover). pair_type_score reduced as it provides less discrimination within the eligible candidate set.",
+    "low_tvl_threshold_usd": 25000,
+    "_low_tvl_threshold_note": "Proxy records with TVL below this are used to compute low_tvl_perf. Matches typical Hydrex bootstrap TVL range ($500-$10k in practice, $25k gives adequate sample size).",
+    "major_tokens": ["WETH", "USDC", "cbBTC", "USDT", "DAI", "cbETH"],
+    "_major_tokens_note": "Tokens considered 'blue chip' for pair_type_score. Pairs with 2 majors score 1.0, 1 major 0.7, 0 majors 0.3.",
+    "primary_lp_share_note": "share = our_planned_tvl / (competitor_primary_lp_usd + our_planned_tvl). HOME was profitable because its primary LP was only ~$70k, so a $3k add was a meaningful share.",
+    "planned_seed_tvl_usd": 3000,
+    "top_n_picks": 4
+  },
+
+  "hydrex_subgraph": {
+    "_comment": "Goldsky subgraph for all Hydrex pools. Queried at score time to exclude pairs that already have a pool on Hydrex.",
+    "endpoint": "https://api.goldsky.com/api/public/project_cmafph25ltm5g01yv3vr7bsoe/subgraphs/analytics/v1.0.7/gn"
+  },
+
+  "proxy_dataset": {
+    "_comment": "Aerodrome historical pools used as the labeled training set (label = fees > emissions). Pull via the Dune API. Find the numeric query id behind each table on https://dune.com/0xkhmer/aerodrome (open the viz -> 'Query' -> the id in the URL). Set DUNE_API_KEY in env.",
+    "dune_api_key_env": "DUNE_API_KEY",
+    "aerodrome_query_id": 7690082,
+    "label_rule": "profitable = fees_usd > emissions_usd"
+  }
+}

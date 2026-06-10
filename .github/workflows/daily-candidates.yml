@@ -1,0 +1,45 @@
+name: Daily candidate scan
+
+# Scouts Base pools each morning, enriches the shortlist with on-chain fee tiers,
+# scores them, and commits the resulting CSVs. Mirrors the existing weekly
+# bootstrap Action's pattern (carried over from the forked repo).
+
+on:
+  schedule:
+    - cron: "0 7 * * *"   # 07:00 UTC daily
+  workflow_dispatch: {}     # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install requests web3
+
+      - name: Pull candidates (DexScreener)
+        run: python candidate_pull.py
+
+      - name: Enrich with on-chain fee tiers
+        env:
+          BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
+        run: python fee_enrich.py
+
+      - name: Score and emit weekly picks
+        run: python score.py
+
+      - name: Commit data
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add data/*.csv
+          git commit -m "Daily candidate scan $(date -u +%F)" || echo "no changes"
+          git push

@@ -1,0 +1,5 @@
+requests>=2.31
+web3>=6.15
+# Only needed for `score.py --feature-importance` (phase 2):
+scikit-learn>=1.3
+numpy>=1.24
