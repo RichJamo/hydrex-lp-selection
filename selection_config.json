@@ -55,7 +55,7 @@
   "subgraphs": {
     "_comment": "The Graph subgraph IDs used by fee_enrich.py for 7-day rolling data. Aerodrome is queried first; Uniswap v3 is the fallback for pools not found there. Requires THEGRAPH_API_KEY env var.",
     "aerodrome_base": "GENunSHWLBXm59mBSgPzQ8metBEp9YDfdqwFr91Av1UM",
-    "uniswap_v3_base": "FUbEPQw1oMghy39fwWBFY5fE6MXPXZQtjncQy2cXdrNS"
+    "uniswap_v3_base": "HMuAwufqZ1YCRmzL2SfHTVkzZovC9VL2UAKhjvRqKiR1"
   },
 
   "proxy_dataset": {

@@ -31,6 +31,7 @@ jobs:
       - name: Enrich with on-chain fee tiers
         env:
           BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
+          THEGRAPH_API_KEY: ${{ secrets.THEGRAPH_API_KEY }}
         run: python fee_enrich.py
 
       - name: Score and emit weekly picks
