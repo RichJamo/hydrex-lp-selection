@@ -52,6 +52,12 @@
     "endpoint": "https://api.goldsky.com/api/public/project_cmafph25ltm5g01yv3vr7bsoe/subgraphs/analytics/v1.0.7/gn"
   },
 
+  "subgraphs": {
+    "_comment": "The Graph subgraph IDs used by fee_enrich.py for 7-day rolling data. Aerodrome is queried first; Uniswap v3 is the fallback for pools not found there. Requires THEGRAPH_API_KEY env var.",
+    "aerodrome_base": "GENunSHWLBXm59mBSgPzQ8metBEp9YDfdqwFr91Av1UM",
+    "uniswap_v3_base": "FUbEPQw1oMghy39fwWBFY5fE6MXPXZQtjncQy2cXdrNS"
+  },
+
   "proxy_dataset": {
     "_comment": "Aerodrome historical pools used as the labeled training set (label = fees > emissions). Pull via the Dune API. Find the numeric query id behind each table on https://dune.com/0xkhmer/aerodrome (open the viz -> 'Query' -> the id in the URL). Set DUNE_API_KEY in env.",
     "dune_api_key_env": "DUNE_API_KEY",

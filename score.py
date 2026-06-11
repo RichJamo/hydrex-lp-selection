@@ -192,15 +192,23 @@ def emit_picks(ranked: list):
     existing = _existing_hydrex_pairs()
     n = S["top_n_picks"]
 
-    # Deduplicate by token pair — keep highest-scoring instance of each pair
-    # (same pair can appear multiple times from different DEXes)
-    seen_pairs, deduped = set(), []
+    # Deduplicate by token pair. When the same pair exists on multiple DEXes,
+    # prefer Aerodrome 7-day data (epoch-aligned, our ground-truth proxy) over
+    # Uniswap 7d, then DexScreener 24h fallback; break ties by score.
+    def _src_pri(r):
+        src = r.get("seven_day_source", "")
+        return 2 if src == "aerodrome" else (1 if src else 0)
+
+    pair_best: dict = {}
     for r in ranked:
         tokens = frozenset(t.upper().strip() for t in r.get("pair", "/").split("/"))
-        if tokens not in seen_pairs:
-            seen_pairs.add(tokens)
-            deduped.append(r)
-    ranked = deduped
+        if tokens not in pair_best:
+            pair_best[tokens] = r
+        else:
+            prev = pair_best[tokens]
+            if (_src_pri(r), r["score"]) > (_src_pri(prev), prev["score"]):
+                pair_best[tokens] = r
+    ranked = sorted(pair_best.values(), key=lambda r: r["score"], reverse=True)
 
     # Separate candidates into new (eligible) and already-on-Hydrex
     new_candidates, already_exists = [], []

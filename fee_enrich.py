@@ -32,8 +32,6 @@ from pathlib import Path
 import requests
 from web3 import Web3
 
-AERODROME_SUBGRAPH_ID = "GENunSHWLBXm59mBSgPzQ8metBEp9YDfdqwFr91Av1UM"
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG = json.loads((SCRIPT_DIR / "selection_config.json").read_text())
 IN_CSV = SCRIPT_DIR / "data" / "candidates_daily.csv"
@@ -81,17 +79,18 @@ def read_fee_tier(w3: Web3, pool_address: str) -> tuple:
         return None, None, "unreadable"
 
 
-def fetch_7d_data(pool_addrs: list, api_key: str) -> dict:
+def fetch_7d_data(pool_addrs: list, api_key: str, subgraph_id: str) -> dict:
     """
-    Query the Aerodrome subgraph for the last 7 days of poolDayData for each
-    candidate pool address. Non-Aerodrome pools simply won't appear in the result.
+    Query a The Graph subgraph for the last 7 days of poolDayData for each
+    candidate pool address. Pools not indexed by this subgraph simply won't
+    appear in the result.
     Returns {pool_addr_lower: {vol_7d, fees_7d, tvl_avg, n_days}}.
     """
-    if not api_key or not pool_addrs:
+    if not api_key or not pool_addrs or not subgraph_id:
         return {}
 
     url = (f"https://gateway.thegraph.com/api/{api_key}"
-           f"/subgraphs/id/{AERODROME_SUBGRAPH_ID}")
+           f"/subgraphs/id/{subgraph_id}")
     since_day = (int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp())
                  // 86400) * 86400
 
@@ -182,21 +181,42 @@ def main():
         print("Nothing to write.")
         return
 
-    # Enrich with 7-day rolling data from Aerodrome subgraph
+    # Enrich with 7-day rolling data — Aerodrome first, Uniswap v3 for the rest
     graph_key = os.environ.get("THEGRAPH_API_KEY", "")
-    print("\nFetching 7-day rolling data from Aerodrome subgraph...")
+    subgraph_cfg = CONFIG.get("subgraphs", {})
+    aero_id = subgraph_cfg.get("aerodrome_base", "")
+    uni_id  = subgraph_cfg.get("uniswap_v3_base", "")
+
     addrs = [r["pair_address"].lower() for r in out if r.get("pair_address")]
-    seven_day = fetch_7d_data(addrs, graph_key)
+
+    print("\nFetching 7-day rolling data from Aerodrome subgraph...")
+    aero_7d = fetch_7d_data(addrs, graph_key, aero_id)
+
+    remaining = [a for a in addrs if a not in aero_7d]
+    uni_7d = {}
+    if uni_id and remaining:
+        print(f"Fetching 7-day rolling data from Uniswap v3 subgraph ({len(remaining)} remaining pools)...")
+        uni_7d = fetch_7d_data(remaining, graph_key, uni_id)
+
     for r in out:
         addr = r.get("pair_address", "").lower()
-        if addr in seven_day:
-            d = seven_day[addr]
-            r["vol_7d_usd"]     = round(d["vol_7d"],  2)
-            r["fees_7d_usd"]    = round(d["fees_7d"], 2)
-            r["tvl_avg_7d_usd"] = round(d["tvl_avg"], 2)
-            r["data_days"]      = d["n_days"]
+        if addr in aero_7d:
+            d = aero_7d[addr]
+            r["vol_7d_usd"]       = round(d["vol_7d"],  2)
+            r["fees_7d_usd"]      = round(d["fees_7d"], 2)
+            r["tvl_avg_7d_usd"]   = round(d["tvl_avg"], 2)
+            r["data_days"]        = d["n_days"]
+            r["seven_day_source"] = "aerodrome"
+        elif addr in uni_7d:
+            d = uni_7d[addr]
+            r["vol_7d_usd"]       = round(d["vol_7d"],  2)
+            r["fees_7d_usd"]      = round(d["fees_7d"], 2)
+            r["tvl_avg_7d_usd"]   = round(d["tvl_avg"], 2)
+            r["data_days"]        = d["n_days"]
+            r["seven_day_source"] = "uniswap"
         else:
             r["vol_7d_usd"] = r["fees_7d_usd"] = r["tvl_avg_7d_usd"] = r["data_days"] = ""
+            r["seven_day_source"] = ""
 
     fieldnames = list(out[0].keys())
     with open(OUT_CSV, "w", newline="") as f:
