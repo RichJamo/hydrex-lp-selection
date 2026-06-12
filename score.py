@@ -123,7 +123,28 @@ def compute_features(rows: list) -> list:
     return rows
 
 
+def _apply_filters(rows: list) -> list:
+    """Drop rows that fail runtime filters (distinct from candidate_pull.py pre-filters)."""
+    max_vt = CONFIG["candidate_filters"].get("max_vol_tvl_24h")
+    if not max_vt:
+        return rows
+    kept = []
+    for r in rows:
+        liq = _f(r.get("tvl_avg_7d_usd")) or _f(r.get("liquidity_usd"))
+        n = max(_f(r.get("data_days"), 1.0), 1.0)
+        vol_7d = _f(r.get("vol_7d_usd"))
+        vol = (vol_7d / n) if vol_7d > 0 else _f(r.get("vol_24h"))
+        if liq > 0 and vol / liq > max_vt:
+            continue
+        kept.append(r)
+    if len(kept) < len(rows):
+        dropped = [r["pair"] for r in rows if r not in kept]
+        print(f"  Filtered {len(rows) - len(kept)} pools with vol/TVL > {max_vt}×: {', '.join(dropped)}")
+    return kept
+
+
 def score(rows: list) -> list:
+    rows = _apply_filters(rows)
     rows = compute_features(rows)
     feats = {
         "est_fees_per_day_usd": "_est_fees_per_day_usd",
@@ -210,10 +231,14 @@ def emit_picks(ranked: list):
                 pair_best[tokens] = r
     ranked = sorted(pair_best.values(), key=lambda r: r["score"], reverse=True)
 
-    # Separate candidates into new (eligible) and already-on-Hydrex
+    excluded_tokens = {t.upper() for t in CONFIG["candidate_filters"].get("exclude_tokens", [])}
+
+    # Separate candidates into new (eligible) and already-on-Hydrex or excluded
     new_candidates, already_exists = [], []
     for r in ranked:
         tokens = frozenset(t.upper().strip() for t in r.get("pair", "/").split("/"))
+        if tokens & excluded_tokens:
+            continue
         if tokens in existing:
             already_exists.append(r)
         else:
