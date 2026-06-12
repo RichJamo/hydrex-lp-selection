@@ -7,7 +7,11 @@
     "_comment": "Agreed in the Jun 9 2026 Rich<>Austin meeting: strip meme coins and illiquid junk.",
     "min_liquidity_usd": 50000,
     "min_market_cap_usd": 1000000,
+    "exclude_tokens": ["AERO", "UP"],
+    "_exclude_tokens_note": "Austin Jun 2026: pass on AERO pools (conflict-of-interest); UP was in a prior epoch and under-performed.",
     "exclude_quote_symbols": [],
+    "max_vol_tvl_24h": 5.0,
+    "_max_vol_tvl_24h_note": "Exclude pools where 24h volume > 5× liquidity. Extreme vol/TVL (e.g. 10×) signals LP flight or thin liquidity, not genuine trading demand.",
     "max_pool_age_days_for_new_bucket": 21
   },
 
@@ -55,7 +59,8 @@
   "subgraphs": {
     "_comment": "The Graph subgraph IDs used by fee_enrich.py for 7-day rolling data. Aerodrome is queried first; Uniswap v3 is the fallback for pools not found there. Requires THEGRAPH_API_KEY env var.",
     "aerodrome_base": "GENunSHWLBXm59mBSgPzQ8metBEp9YDfdqwFr91Av1UM",
-    "uniswap_v3_base": "HMuAwufqZ1YCRmzL2SfHTVkzZovC9VL2UAKhjvRqKiR1"
+    "uniswap_v3_base": "HMuAwufqZ1YCRmzL2SfHTVkzZovC9VL2UAKhjvRqKiR1",
+    "uniswap_v2_base": "5kQUuZHhFmFqMJ6pcQsUQcEjMh4dJNDhwcP1Fpd572ZW"
   },
 
   "proxy_dataset": {

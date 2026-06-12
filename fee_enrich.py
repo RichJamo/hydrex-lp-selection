@@ -56,6 +56,15 @@ FEE_ABI = {
     "outputs": [{"name": "", "type": "uint24"}],
     "stateMutability": "view", "type": "function",
 }
+GETRESERVES_ABI = {
+    "inputs": [], "name": "getReserves",
+    "outputs": [
+        {"name": "_reserve0", "type": "uint112"},
+        {"name": "_reserve1", "type": "uint112"},
+        {"name": "_blockTimestampLast", "type": "uint32"},
+    ],
+    "stateMutability": "view", "type": "function",
+}
 
 
 def read_fee_tier(w3: Web3, pool_address: str) -> tuple:
@@ -75,6 +84,13 @@ def read_fee_tier(w3: Web3, pool_address: str) -> tuple:
         c = w3.eth.contract(address=addr, abi=[FEE_ABI])
         fee = c.functions.fee().call()
         return fee / 1_000_000, False, "fee()"
+    except Exception:
+        pass
+    # Uniswap v2 — fixed 0.3% fee, detected via getReserves()
+    try:
+        c = w3.eth.contract(address=addr, abi=[GETRESERVES_ABI])
+        c.functions.getReserves().call()
+        return 0.003, False, "getReserves.v2"
     except Exception:
         return None, None, "unreadable"
 
@@ -131,6 +147,64 @@ def fetch_7d_data(pool_addrs: list, api_key: str, subgraph_id: str) -> dict:
         time.sleep(0.05)
 
     print(f"  7d subgraph data: {len(results)}/{len(pool_addrs)} pools found")
+    return results
+
+
+def fetch_v2_7d_data(pool_addrs: list, api_key: str, subgraph_id: str) -> dict:
+    """
+    Query a Uniswap V2 subgraph for the last 7 days of pairDayData.
+    V2 schema differs from V3: pairAddress_in filter, reserveUSD for TVL,
+    no feesUSD (computed as dailyVolumeUSD * 0.003).
+    Returns {pool_addr_lower: {vol_7d, fees_7d, tvl_avg, n_days}}.
+    """
+    if not api_key or not pool_addrs or not subgraph_id:
+        return {}
+
+    url = (f"https://gateway.thegraph.com/api/{api_key}"
+           f"/subgraphs/id/{subgraph_id}")
+    since_day = (int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp())
+                 // 86400) * 86400
+
+    query = """
+    query($pairs: [String!]!, $since: Int!) {
+      pairDayDatas(
+        first: 1000, orderBy: date, orderDirection: desc,
+        where: { pairAddress_in: $pairs, date_gte: $since }
+      ) {
+        pairAddress
+        dailyVolumeUSD
+        reserveUSD
+      }
+    }
+    """
+
+    V2_FEE = 0.003
+    results = {}
+    batch_size = 50
+    for i in range(0, len(pool_addrs), batch_size):
+        batch = pool_addrs[i:i + batch_size]
+        try:
+            r = requests.post(url,
+                json={"query": query, "variables": {"pairs": batch, "since": since_day}},
+                timeout=30)
+            r.raise_for_status()
+            days_data = r.json().get("data", {}).get("pairDayDatas", [])
+            by_pair = defaultdict(list)
+            for d in days_data:
+                by_pair[d["pairAddress"].lower()].append(d)
+            for addr, days in by_pair.items():
+                vol_7d = sum(float(d["dailyVolumeUSD"]) for d in days)
+                results[addr] = {
+                    "vol_7d":  vol_7d,
+                    "fees_7d": vol_7d * V2_FEE,
+                    "tvl_avg": sum(float(d["reserveUSD"]) for d in days) / len(days),
+                    "n_days":  len(days),
+                }
+        except Exception as e:
+            print(f"  7d V2 subgraph batch error: {e}")
+        time.sleep(0.05)
+
+    print(f"  7d V2 subgraph data: {len(results)}/{len(pool_addrs)} pools found")
     return results
 
 
@@ -198,6 +272,13 @@ def main():
         print(f"Fetching 7-day rolling data from Uniswap v3 subgraph ({len(remaining)} remaining pools)...")
         uni_7d = fetch_7d_data(remaining, graph_key, uni_id)
 
+    remaining2 = [a for a in remaining if a not in uni_7d]
+    v2_id = subgraph_cfg.get("uniswap_v2_base", "")
+    uni_v2_7d = {}
+    if v2_id and remaining2:
+        print(f"Fetching 7-day rolling data from Uniswap v2 subgraph ({len(remaining2)} remaining pools)...")
+        uni_v2_7d = fetch_v2_7d_data(remaining2, graph_key, v2_id)
+
     for r in out:
         addr = r.get("pair_address", "").lower()
         if addr in aero_7d:
@@ -214,6 +295,13 @@ def main():
             r["tvl_avg_7d_usd"]   = round(d["tvl_avg"], 2)
             r["data_days"]        = d["n_days"]
             r["seven_day_source"] = "uniswap"
+        elif addr in uni_v2_7d:
+            d = uni_v2_7d[addr]
+            r["vol_7d_usd"]       = round(d["vol_7d"],  2)
+            r["fees_7d_usd"]      = round(d["fees_7d"], 2)
+            r["tvl_avg_7d_usd"]   = round(d["tvl_avg"], 2)
+            r["data_days"]        = d["n_days"]
+            r["seven_day_source"] = "uniswap-v2"
         else:
             r["vol_7d_usd"] = r["fees_7d_usd"] = r["tvl_avg_7d_usd"] = r["data_days"] = ""
             r["seven_day_source"] = ""
