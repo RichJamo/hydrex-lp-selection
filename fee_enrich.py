@@ -219,31 +219,79 @@ def main():
         rows = list(csv.DictReader(f))
 
     today = dt.date.today().isoformat()
-    # Only enrich today's filtered shortlist (keep it cheap)
-    targets = [r for r in rows if r["date"] == today and r["passed_filter"] in ("True", True)]
-    # De-dupe by pool address (a pool can appear from multiple discovery sources)
-    seen, unique = set(), []
-    for r in targets:
-        if r["pair_address"].lower() not in seen:
-            seen.add(r["pair_address"].lower())
-            unique.append(r)
-    print(f"Enriching {len(unique)} unique filtered pools for {today}")
+    cutoff = (dt.date.today() - dt.timedelta(days=7)).isoformat()
+    FILTER_CFG = CONFIG["candidate_filters"]
+    MIN_LIQ = float(FILTER_CFG.get("min_liquidity_usd", 0))
+    MIN_MC  = float(FILTER_CFG.get("min_market_cap_usd", 0))
+
+    # Use rolling 7-day averages from the CSV for filtering and as a scoring fallback.
+    # This prevents a pool from being silently dropped because DexScreener had a noisy
+    # snapshot on one particular day.
+    recent = [r for r in rows if r.get("date", "") >= cutoff]
+    by_addr = defaultdict(list)
+    for r in recent:
+        addr = r.get("pair_address", "").lower()
+        if addr:
+            by_addr[addr].append(r)
+
+    unique = []
+    for addr, addr_rows in by_addr.items():
+        def _fv(r, k):
+            try: return float(r[k])
+            except (KeyError, TypeError, ValueError): return 0.0
+
+        liq_vals = [_fv(r, "liquidity_usd") for r in addr_rows if _fv(r, "liquidity_usd") > 0]
+        vol_vals  = [_fv(r, "vol_24h")       for r in addr_rows if _fv(r, "vol_24h")       > 0]
+        mc_vals   = [_fv(r, "market_cap")    for r in addr_rows if _fv(r, "market_cap")    > 0]
+
+        avg_liq = sum(liq_vals) / len(liq_vals) if liq_vals else 0
+        avg_vol = sum(vol_vals)  / len(vol_vals)  if vol_vals  else 0
+        avg_mc  = sum(mc_vals)   / len(mc_vals)   if mc_vals   else 0
+        days_seen = len(set(r["date"] for r in addr_rows))
+
+        # Filter on rolling averages, not today's single snapshot
+        if avg_liq < MIN_LIQ or avg_mc < MIN_MC:
+            continue
+
+        # Representative row: today's if available, else most recent
+        today_rows = [r for r in addr_rows if r["date"] == today]
+        rep = dict(today_rows[0] if today_rows
+                   else sorted(addr_rows, key=lambda x: x["date"])[-1])
+
+        rep["csv_avg_liquidity_7d"] = round(avg_liq, 2)
+        rep["csv_avg_vol_7d"]       = round(avg_vol, 2)
+        rep["csv_days_seen"]        = days_seen
+
+        # LP exit signal: current liquidity has dropped significantly below rolling avg.
+        # Flags genuine LP withdrawal vs normal daily noise.
+        exit_threshold = float(FILTER_CFG.get("lp_exit_liquidity_drop", 0.5))
+        current_liq = float(rep.get("liquidity_usd") or 0)
+        rep["lp_exit_signal"] = (
+            avg_liq > 0 and current_liq > 0
+            and current_liq < avg_liq * exit_threshold
+        )
+        unique.append(rep)
+
+    print(f"Enriching {len(unique)} unique pools (7d rolling filter) for {today}")
 
     out = []
     for r in unique:
         rate, dynamic, method = read_fee_tier(w3, r["pair_address"])
         vol_24h = float(r["vol_24h"] or 0)
         liq = float(r["liquidity_usd"] or 0)
+        lp_type = {"globalState.lastFee": "CLAMM", "fee()": "CL/V3", "getReserves.v2": "V2"}.get(method, "")
         if rate is not None:
             fees_24h = vol_24h * rate
             r["fee_tier_bps"] = round(rate * 10000, 4)   # e.g. 0.0005 -> 5 bps
             r["fee_read_method"] = method
+            r["lp_type"] = lp_type
             r["dynamic_fee"] = dynamic
             r["est_fees_24h_usd"] = round(fees_24h, 2)
             r["est_fees_per_tvl_24h"] = round(fees_24h / liq, 6) if liq > 0 else 0
         else:
             r["fee_tier_bps"] = ""
             r["fee_read_method"] = method
+            r["lp_type"] = lp_type
             r["dynamic_fee"] = ""
             r["est_fees_24h_usd"] = ""
             r["est_fees_per_tvl_24h"] = ""

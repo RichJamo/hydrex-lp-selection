@@ -12,6 +12,8 @@
     "exclude_quote_symbols": [],
     "max_vol_tvl_24h": 5.0,
     "_max_vol_tvl_24h_note": "Exclude pools where 24h volume > 5× liquidity. Extreme vol/TVL (e.g. 10×) signals LP flight or thin liquidity, not genuine trading demand.",
+    "lp_exit_liquidity_drop": 0.5,
+    "_lp_exit_note": "Flag (but don't exclude from ranking) pools where today's liquidity < 50% of their 7d rolling average. Signals LP exit rather than noise; flagged pools are shown in top-20 but skipped for top-4 picks.",
     "max_pool_age_days_for_new_bucket": 21
   },
 

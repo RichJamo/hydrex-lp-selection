@@ -84,14 +84,25 @@ def compute_features(rows: list) -> list:
     ltv_lookup = _build_low_tvl_lookup()
 
     for r in rows:
-        # Prefer 7-day subgraph data; fall back to DexScreener 24h snapshot
+        # Priority: subgraph 7d > candidates_csv rolling avg > DexScreener 24h snapshot
         vol_7d  = _f(r.get("vol_7d_usd"))
         fees_7d = _f(r.get("fees_7d_usd"))
         tvl_7d  = _f(r.get("tvl_avg_7d_usd"))
         n_days  = max(_f(r.get("data_days"), 1.0), 1.0)
 
-        liq        = tvl_7d  if tvl_7d  > 0 else _f(r.get("liquidity_usd"))
-        vol_daily  = (vol_7d  / n_days) if vol_7d  > 0 else _f(r.get("vol_24h"))
+        csv_liq  = _f(r.get("csv_avg_liquidity_7d"))
+        csv_vol  = _f(r.get("csv_avg_vol_7d"))
+
+        if tvl_7d > 0:
+            liq       = tvl_7d
+            vol_daily = vol_7d / n_days
+        elif csv_liq > 0:
+            liq       = csv_liq
+            vol_daily = csv_vol
+        else:
+            liq       = _f(r.get("liquidity_usd"))
+            vol_daily = _f(r.get("vol_24h"))
+
         fees_daily = (fees_7d / n_days) if fees_7d > 0 else _f(r.get("est_fees_24h_usd"))
 
         r["_est_fees_per_day_usd"] = fees_daily
@@ -130,10 +141,13 @@ def _apply_filters(rows: list) -> list:
         return rows
     kept = []
     for r in rows:
-        liq = _f(r.get("tvl_avg_7d_usd")) or _f(r.get("liquidity_usd"))
-        n = max(_f(r.get("data_days"), 1.0), 1.0)
-        vol_7d = _f(r.get("vol_7d_usd"))
-        vol = (vol_7d / n) if vol_7d > 0 else _f(r.get("vol_24h"))
+        tvl_7d  = _f(r.get("tvl_avg_7d_usd"))
+        csv_liq = _f(r.get("csv_avg_liquidity_7d"))
+        liq = tvl_7d if tvl_7d > 0 else (csv_liq if csv_liq > 0 else _f(r.get("liquidity_usd")))
+        n       = max(_f(r.get("data_days"), 1.0), 1.0)
+        vol_7d  = _f(r.get("vol_7d_usd"))
+        csv_vol = _f(r.get("csv_avg_vol_7d"))
+        vol = (vol_7d / n) if vol_7d > 0 else (csv_vol if csv_vol > 0 else _f(r.get("vol_24h")))
         if liq > 0 and vol / liq > max_vt:
             continue
         kept.append(r)
@@ -244,22 +258,48 @@ def emit_picks(ranked: list):
         else:
             new_candidates.append(r)
 
-    picks = new_candidates[:n]
+    picks, lp_exit_flagged = [], []
+    for r in new_candidates:
+        if r.get("lp_exit_signal") in (True, "True"):
+            lp_exit_flagged.append(r)
+        elif len(picks) < n:
+            picks.append(r)
 
-    cols = ["date", "pair", "pair_address", "dex", "score", "fee_tier_bps",
+    cols = ["date", "pair", "pair_address", "dex", "lp_type", "score", "fee_tier_bps",
             "est_fees_24h_usd", "liquidity_usd", "market_cap", "pool_age_days",
-            "vol_24h", "score_breakdown"]
+            "vol_24h", "lp_exit_signal", "score_breakdown"]
     PICKS_CSV.parent.mkdir(parents=True, exist_ok=True)
     with open(PICKS_CSV, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
         w.writerows(picks)
 
+    def _fmt_row(r):
+        src = r.get("seven_day_source", "")
+        csv_days = int(_f(r.get("csv_days_seen"), 0))
+        if src:
+            data_window = f"7d/{src}"
+        elif csv_days >= 2:
+            data_window = f"{csv_days}d/candidates_csv"
+        else:
+            data_window = "24h/dexscreener"
+        lp_type = r.get("lp_type") or {"globalState.lastFee": "CLAMM", "fee()": "CL/V3", "getReserves.v2": "V2"}.get(r.get("fee_read_method",""), "?")
+        return (f"  {r['score']:.3f}  {r['pair']:<20} [{r.get('dex','?')}  {lp_type}]  "
+                f"tier={r.get('fee_tier_bps','?')}bps  est_fees_24h=${r.get('est_fees_24h_usd','?')}  "
+                f"liq=${_f(r['liquidity_usd']):,.0f}  data={data_window}  age={r.get('pool_age_days','?')}d")
+
     print(f"\n=== Suggested {n} NEW pools to create — {dt.date.today().isoformat()} ===")
     for r in picks:
-        print(f"  {r['score']:.3f}  {r['pair']:<20} "
-              f"tier={r.get('fee_tier_bps','?')}bps  est_fees_24h=${r.get('est_fees_24h_usd','?')}  "
-              f"liq=${_f(r['liquidity_usd']):,.0f}  age={r.get('pool_age_days','?')}d")
+        print(_fmt_row(r))
+
+    if lp_exit_flagged:
+        print(f"\n  ⚠ LP exit signal (ranked but excluded from picks):")
+        for r in lp_exit_flagged:
+            avg_liq = _f(r.get("csv_avg_liquidity_7d"))
+            cur_liq = _f(r.get("liquidity_usd"))
+            drop_pct = int((1 - cur_liq / avg_liq) * 100) if avg_liq > 0 else 0
+            print(f"  {_fmt_row(r)}")
+            print(f"    ^ liquidity down {drop_pct}% vs 7d avg (${avg_liq:,.0f} → ${cur_liq:,.0f})")
 
     if already_exists:
         print(f"\n  (skipped {len(already_exists)} pairs already on Hydrex: "
