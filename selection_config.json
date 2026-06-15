@@ -27,9 +27,11 @@
   },
 
   "fee_enrich": {
-    "_comment": "Base RPC used for on-chain fee-tier reads. Override with env BASE_RPC_URL. Algebra pools are read via globalState().lastFee; Uniswap/Aerodrome-style via fee().",
+    "_comment": "Base RPC used for on-chain fee-tier reads. Override with env BASE_RPC_URL. Algebra pools are read via globalState().lastFee; Uniswap/Aerodrome-style via fee(). V4 pool IDs are bytes32 (66-char hex) — read via StateView.getSlot0().",
     "base_rpc_url_env": "BASE_RPC_URL",
-    "default_base_rpc_url": "https://mainnet.base.org"
+    "default_base_rpc_url": "https://mainnet.base.org",
+    "uniswap_v4_state_view": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
+    "_uniswap_v4_state_view_note": "Base mainnet StateView (verified BaseScan Jun 2026). getSlot0(bytes32 poolId) returns (sqrtPriceX96, tick, protocolFee, lpFee). lpFee is uint24 in millionths, same encoding as V3 fee()."
   },
 
   "scoring": {
@@ -59,10 +61,12 @@
   },
 
   "subgraphs": {
-    "_comment": "The Graph subgraph IDs used by fee_enrich.py for 7-day rolling data. Aerodrome is queried first; Uniswap v3 is the fallback for pools not found there. Requires THEGRAPH_API_KEY env var.",
+    "_comment": "The Graph subgraph IDs used by fee_enrich.py for 7-day rolling data. Aerodrome is queried first; Uniswap v3/v4 are fallbacks. Requires THEGRAPH_API_KEY env var.",
     "aerodrome_base": "GENunSHWLBXm59mBSgPzQ8metBEp9YDfdqwFr91Av1UM",
     "uniswap_v3_base": "HMuAwufqZ1YCRmzL2SfHTVkzZovC9VL2UAKhjvRqKiR1",
-    "uniswap_v2_base": "5kQUuZHhFmFqMJ6pcQsUQcEjMh4dJNDhwcP1Fpd572ZW"
+    "uniswap_v2_base": "5kQUuZHhFmFqMJ6pcQsUQcEjMh4dJNDhwcP1Fpd572ZW",
+    "uniswap_v4_base": "2L6yxqUZ7dT6GWoTy9qxNBkf9kEk65me3XPMvbGsmJUZ",
+    "_uniswap_v4_base_note": "Official Uniswap v4-subgraph deployment on Base (The Graph Explorer, Jun 2026). Schema matches v3: poolDayDatas with pool_in filter and volumeUSD/feesUSD/tvlUSD fields. Pool IDs are bytes32 strings — pass as lowercase hex with 0x prefix."
   },
 
   "proxy_dataset": {

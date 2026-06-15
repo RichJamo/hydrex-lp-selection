@@ -1,13 +1,18 @@
 """
 fee_enrich.py — add fee tier + fee estimate to filtered candidates.
 
-DexScreener does not expose fees or fee tier, so we read them on-chain. Two
+DexScreener does not expose fees or fee tier, so we read them on-chain. Three
 pool families are handled (verified against live Base pools Jun 2026):
 
   * Algebra Integral (Hydrex CLAMM, and Aerodrome-style dynamic-fee pools):
     globalState() returns (price, tick, lastFee, pluginConfig, communityFee,
     unlocked). lastFee is the CURRENT dynamic fee in millionths (e.g. 500 = 0.05%).
   * Uniswap v3 / static-fee pools: fee() returns a uint24 in millionths.
+  * Uniswap v2: detected via getReserves(); fixed 0.3% fee assumed.
+  * Uniswap v4: DexScreener returns the pool ID as a 66-char bytes32 hex string
+    rather than a 42-char address. Fee is read from StateView.getSlot0(bytes32)
+    which returns (sqrtPriceX96, tick, protocolFee, lpFee); lpFee is uint24 in
+    millionths, same encoding as V3 fee().
 
 We try globalState() first, then fee(). Because Algebra fees are DYNAMIC
 (lastFee is a snapshot, and pools can quote a lower fee on the first swap of a
@@ -65,10 +70,45 @@ GETRESERVES_ABI = {
     ],
     "stateMutability": "view", "type": "function",
 }
+# Uniswap V4 StateView — getSlot0(bytes32 poolId) returns lpFee in millionths.
+# The PoolManager itself does not expose getSlot0 externally; use the StateView
+# peripheral (verified Base mainnet 0xa3c0c9b6…, Jun 2026).
+GETSLOT0_V4_ABI = {
+    "inputs": [{"name": "poolId", "type": "bytes32"}],
+    "name": "getSlot0",
+    "outputs": [
+        {"name": "sqrtPriceX96", "type": "uint160"},
+        {"name": "tick", "type": "int24"},
+        {"name": "protocolFee", "type": "uint24"},
+        {"name": "lpFee", "type": "uint24"},
+    ],
+    "stateMutability": "view", "type": "function",
+}
+
+V4_STATE_VIEW = Web3.to_checksum_address(
+    CONFIG["fee_enrich"].get("uniswap_v4_state_view",
+                             "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71")
+)
 
 
 def read_fee_tier(w3: Web3, pool_address: str) -> tuple:
-    """Return (fee_rate_decimal, dynamic_flag, method) or (None, None, 'unreadable')."""
+    """Return (fee_rate_decimal, dynamic_flag, method) or (None, None, 'unreadable').
+
+    Dispatch rules:
+      - 66-char hex (bytes32): Uniswap V4 pool ID → StateView.getSlot0(poolId)
+      - 42-char hex: standard EVM address → try Algebra / V3 / V2 in order
+      - other length: truly non-EVM address → return non_evm_address immediately
+    """
+    if len(pool_address) == 66:
+        # Uniswap V4 — pool ID is bytes32, not an EVM contract address.
+        # Read fee from the singleton StateView contract.
+        try:
+            state_view = w3.eth.contract(address=V4_STATE_VIEW, abi=[GETSLOT0_V4_ABI])
+            pool_id_bytes = bytes.fromhex(pool_address[2:])
+            lp_fee = state_view.functions.getSlot0(pool_id_bytes).call()[3]
+            return lp_fee / 1_000_000, False, "v4.getSlot0"
+        except Exception:
+            return None, None, "unreadable"
     if len(pool_address) != 42:
         return None, None, "non_evm_address"
     addr = Web3.to_checksum_address(pool_address)
@@ -279,7 +319,12 @@ def main():
         rate, dynamic, method = read_fee_tier(w3, r["pair_address"])
         vol_24h = float(r["vol_24h"] or 0)
         liq = float(r["liquidity_usd"] or 0)
-        lp_type = {"globalState.lastFee": "CLAMM", "fee()": "CL/V3", "getReserves.v2": "V2"}.get(method, "")
+        lp_type = {
+            "globalState.lastFee": "CLAMM",
+            "fee()": "CL/V3",
+            "getReserves.v2": "V2",
+            "v4.getSlot0": "V4",
+        }.get(method, "")
         if rate is not None:
             fees_24h = vol_24h * rate
             r["fee_tier_bps"] = round(rate * 10000, 4)   # e.g. 0.0005 -> 5 bps
@@ -303,7 +348,7 @@ def main():
         print("Nothing to write.")
         return
 
-    # Enrich with 7-day rolling data — Aerodrome first, Uniswap v3 for the rest
+    # Enrich with 7-day rolling data — Aerodrome first, then Uniswap v3/v2/v4
     graph_key = os.environ.get("THEGRAPH_API_KEY", "")
     subgraph_cfg = CONFIG.get("subgraphs", {})
     aero_id = subgraph_cfg.get("aerodrome_base", "")
@@ -326,6 +371,16 @@ def main():
     if v2_id and remaining2:
         print(f"Fetching 7-day rolling data from Uniswap v2 subgraph ({len(remaining2)} remaining pools)...")
         uni_v2_7d = fetch_v2_7d_data(remaining2, graph_key, v2_id)
+
+    # V4 pool IDs are bytes32 (66-char), so they are never found in v2/v3 subgraphs.
+    # Query the V4 subgraph for any remaining 66-char pool IDs.
+    remaining3 = [a for a in remaining2 if a not in uni_v2_7d]
+    v4_id = subgraph_cfg.get("uniswap_v4_base", "")
+    uni_v4_7d = {}
+    v4_pool_ids = [a for a in remaining3 if len(a) == 66 or len(a) == 64]
+    if v4_id and v4_pool_ids:
+        print(f"Fetching 7-day rolling data from Uniswap v4 subgraph ({len(v4_pool_ids)} V4 pools)...")
+        uni_v4_7d = fetch_7d_data(v4_pool_ids, graph_key, v4_id)
 
     for r in out:
         addr = r.get("pair_address", "").lower()
@@ -350,6 +405,13 @@ def main():
             r["tvl_avg_7d_usd"]   = round(d["tvl_avg"], 2)
             r["data_days"]        = d["n_days"]
             r["seven_day_source"] = "uniswap-v2"
+        elif addr in uni_v4_7d:
+            d = uni_v4_7d[addr]
+            r["vol_7d_usd"]       = round(d["vol_7d"],  2)
+            r["fees_7d_usd"]      = round(d["fees_7d"], 2)
+            r["tvl_avg_7d_usd"]   = round(d["tvl_avg"], 2)
+            r["data_days"]        = d["n_days"]
+            r["seven_day_source"] = "uniswap-v4"
         else:
             r["vol_7d_usd"] = r["fees_7d_usd"] = r["tvl_avg_7d_usd"] = r["data_days"] = ""
             r["seven_day_source"] = ""
