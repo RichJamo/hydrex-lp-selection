@@ -38,14 +38,14 @@
     "_comment": "Transparent weighted score (phase 1). Weights calibrated from Aerodrome proxy ML (14k pool-epochs, ROC-AUC 0.682). Each feature is normalized 0-1 then weighted; weights need not sum to 1.",
     "weights": {
       "est_fees_per_day_usd": 0.30,
-      "fees_per_tvl_ratio":   0.28,
-      "vol_tvl_24h":          0.18,
+      "fees_per_tvl_ratio":   0.46,
+      "vol_tvl_24h":          0.00,
       "low_tvl_perf":         0.12,
       "pair_type_score":      0.07,
       "newness_bonus":        0.03,
       "buy_sell_balance":     0.02
     },
-    "_weights_rationale": "low_tvl_perf replaces primary_lp_share — Aerodrome proxy shows which pairs stay profitable at bootstrap-scale TVL, which is the actual Hydrex launch condition. vol_tvl_24h weight raised to reflect its importance in the retrospective backtest (HOME/AORA/NOCK all had >4x daily turnover). pair_type_score reduced as it provides less discrimination within the eligible candidate set.",
+    "_weights_rationale": "vol_tvl_24h removed Jun 2026: univariate analysis on Aerodrome proxy shows it has near-zero standalone predictive power (AUC 0.483, ρ +0.027) — it is an inferior version of fees_per_tvl_ratio, which captures the same turnover signal but incorporates the fee tier. Its 0.18 weight was moved to fees_per_tvl_ratio (0.28 → 0.46), consistent with logistic regression suggesting fees/TVL as the strongest individual predictor (AUC 0.618).",
     "low_tvl_threshold_usd": 25000,
     "_low_tvl_threshold_note": "Proxy records with TVL below this are used to compute low_tvl_perf. Matches typical Hydrex bootstrap TVL range ($500-$10k in practice, $25k gives adequate sample size).",
     "major_tokens": ["WETH", "USDC", "cbBTC", "USDT", "DAI", "cbETH"],
