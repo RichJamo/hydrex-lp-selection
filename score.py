@@ -267,9 +267,22 @@ def emit_picks(ranked: list):
         elif len(picks) < n:
             picks.append(r)
 
+    def _is_dynamic_snapshot(r) -> bool:
+        """True when fee is a dynamic-fee snapshot with no subgraph to correct it."""
+        return r.get("dynamic_fee") == "True" and not r.get("seven_day_source", "")
+
+    def _note(r) -> str:
+        parts = []
+        if _is_dynamic_snapshot(r):
+            parts.append("Dynamic fee — est. fees are a snapshot only")
+        return "; ".join(parts)
+
+    for r in picks:
+        r["note"] = _note(r)
+
     cols = ["date", "pair", "pair_address", "dex", "lp_type", "score", "fee_tier_bps",
             "est_fees_24h_usd", "liquidity_usd", "market_cap", "pool_age_days",
-            "vol_24h", "lp_exit_signal", "score_breakdown"]
+            "vol_24h", "lp_exit_signal", "note", "score_breakdown"]
     PICKS_CSV.parent.mkdir(parents=True, exist_ok=True)
     with open(PICKS_CSV, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
@@ -286,19 +299,26 @@ def emit_picks(ranked: list):
         else:
             data_window = "24h/dexscreener"
         lp_type = r.get("lp_type") or {"globalState.lastFee": "CLAMM", "fee()": "CL/V3", "getReserves.v2": "V2"}.get(r.get("fee_read_method",""), "?")
+        fee_tier = r.get("fee_tier_bps", "?")
+        if fee_tier and fee_tier != "?" and _is_dynamic_snapshot(r):
+            fee_tier = f"~{fee_tier}"
         return (f"  {r['score']:.3f}  {r['pair']:<20} [{r.get('dex','?')}  {lp_type}]  "
-                f"tier={r.get('fee_tier_bps','?')}bps  est_fees_24h=${r.get('est_fees_24h_usd','?')}  "
+                f"tier={fee_tier}bps  est_fees_24h=${r.get('est_fees_24h_usd','?')}  "
                 f"liq=${_f(r['liquidity_usd']):,.0f}  data={data_window}  age={r.get('pool_age_days','?')}d")
 
     print(f"\n=== Suggested {n} NEW pools to create — {dt.date.today().isoformat()} ===")
     for r in picks:
         print(_fmt_row(r))
+        if _is_dynamic_snapshot(r):
+            print(f"    ^ dynamic fee (Algebra) — est. fees are a snapshot only")
 
     if no_fee_tier:
         print(f"\n  ⚠ No fee tier (unreadable or non-EVM address — cannot assess fees):")
         for r in no_fee_tier:
             print(f"  {_fmt_row(r)}")
             print(f"    ^ fee_read_method={r.get('fee_read_method','')} — likely V4 pool or non-EVM chain")
+            if _is_dynamic_snapshot(r):
+                print(f"    ^ dynamic fee (Algebra) — est. fees are a snapshot only")
 
     if lp_exit_flagged:
         print(f"\n  ⚠ LP exit signal (ranked but excluded from picks):")
@@ -308,6 +328,8 @@ def emit_picks(ranked: list):
             drop_pct = int((1 - cur_liq / avg_liq) * 100) if avg_liq > 0 else 0
             print(f"  {_fmt_row(r)}")
             print(f"    ^ liquidity down {drop_pct}% vs 7d avg (${avg_liq:,.0f} → ${cur_liq:,.0f})")
+            if _is_dynamic_snapshot(r):
+                print(f"    ^ dynamic fee (Algebra) — est. fees are a snapshot only")
 
     if already_exists:
         print(f"\n  (skipped {len(already_exists)} pairs already on Hydrex: "
