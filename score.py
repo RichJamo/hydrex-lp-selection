@@ -258,9 +258,11 @@ def emit_picks(ranked: list):
         else:
             new_candidates.append(r)
 
-    picks, lp_exit_flagged = [], []
+    picks, lp_exit_flagged, no_fee_tier = [], [], []
     for r in new_candidates:
-        if r.get("lp_exit_signal") in (True, "True"):
+        if not r.get("fee_tier_bps"):
+            no_fee_tier.append(r)
+        elif r.get("lp_exit_signal") in (True, "True"):
             lp_exit_flagged.append(r)
         elif len(picks) < n:
             picks.append(r)
@@ -291,6 +293,12 @@ def emit_picks(ranked: list):
     print(f"\n=== Suggested {n} NEW pools to create — {dt.date.today().isoformat()} ===")
     for r in picks:
         print(_fmt_row(r))
+
+    if no_fee_tier:
+        print(f"\n  ⚠ No fee tier (unreadable or non-EVM address — cannot assess fees):")
+        for r in no_fee_tier:
+            print(f"  {_fmt_row(r)}")
+            print(f"    ^ fee_read_method={r.get('fee_read_method','')} — likely V4 pool or non-EVM chain")
 
     if lp_exit_flagged:
         print(f"\n  ⚠ LP exit signal (ranked but excluded from picks):")
