@@ -96,7 +96,7 @@ def analyze(row: dict, cfg: dict) -> None:
     pair      = row["pair"]
     dex       = row.get("dex", "?")
     lp_type   = row.get("lp_type", "?")
-    fee_bps   = float(row.get("fee_tier_bps") or 0)
+    ext_bps   = float(row.get("fee_tier_bps") or 0)   # incumbent pool's static fee
     vol_24h   = float(row.get("vol_24h") or 0)
     liq       = float(row.get("liquidity_usd") or 0)
     est_fees  = float(row.get("est_fees_24h_usd") or 0)
@@ -104,53 +104,71 @@ def analyze(row: dict, cfg: dict) -> None:
     base_sym, _, quote_sym = pair.partition("/")
     tier    = _vol_tier(base_sym, quote_sym, majors)
     profile = FEE_PROFILES[tier]
-    max_fee = profile["baseFee"] + profile["alpha1"] + profile["alpha2"]
+    max_fee_pips = profile["baseFee"] + profile["alpha1"] + profile["alpha2"]
 
-    w = 65
+    # Hydrex dynamic fee scenarios (all in bps)
+    floor_bps = profile["baseFee"] / 100
+    avg_bps   = (profile["baseFee"] + profile["alpha1"] // 2) / 100  # moderate activity estimate
+    peak_bps  = max_fee_pips / 100
+
+    # Named scenarios: (label, bps)
+    scenarios = [
+        (f"Floor ({floor_bps:.1f}bps)", floor_bps),
+        (f"Avg (~{avg_bps:.1f}bps)",    avg_bps),
+        (f"Peak ({peak_bps:.0f}bps)",   peak_bps),
+        (f"Ext ({ext_bps:.0f}bps)",     ext_bps),
+    ]
+
+    w = 75
     print(f"\n{'═' * w}")
-    print(f"  {pair}  [{dex} · {lp_type}]  tier={fee_bps:.0f}bps  liq=${liq:,.0f}")
-    print(f"  External vol: ${vol_24h:,.0f}/day  |  est fees/day (external): ${est_fees:,.2f}")
+    print(f"  {pair}  [{dex} · {lp_type}]  incumbent fee={ext_bps:.0f}bps  liq=${liq:,.0f}")
+    print(f"  External vol: ${vol_24h:,.0f}/day  |  est fees/day at ext pool: ${est_fees:,.2f}")
     print(f"{'═' * w}")
 
-    # ── 1. Volume capture sensitivity ────────────────────────────────────────
-    print(f"\n  1. Volume capture sensitivity  (epoch = {epoch_days} days)")
-    print(f"  {'Capture':>8}  {'Vol/epoch':>12}  {'Fees/epoch':>12}  "
-          f"{'Max oHYDX':>11}  {'Budget (USD)':>13}")
+    # ── 1. Fees/epoch by capture rate × fee scenario ─────────────────────────
+    col_w = 13
+    hdr   = "".join(f"{s[0]:>{col_w}}" for s in scenarios)
+    print(f"\n  1. Fees/epoch by capture rate × Hydrex fee scenario  (epoch = {epoch_days} days)")
+    print(f"     {'Avg est uses baseFee + alpha1/2 — actual will vary with realised volatility':}")
+    print(f"\n  {'Capture':>8}  {'Vol/epoch':>11}  {hdr}")
     print(f"  {'-' * (w - 2)}")
 
     rec_budget_usd = None
     rec_ohydx      = None
+    anchor_rate    = 0.10
 
     for rate in capture_rates:
-        vol_epoch  = vol_24h * epoch_days * rate
-        fees_epoch = vol_epoch * (fee_bps / 10_000)
-        max_ohydx  = fees_epoch / ohydx_unit_cost if ohydx_unit_cost else 0
-        tag = "  ← recommended" if rate == 0.10 else ""
-        if rate == 0.10:
-            rec_budget_usd = fees_epoch
-            rec_ohydx      = max_ohydx
-        print(f"  {rate:>7.0%}  ${vol_epoch:>11,.0f}  ${fees_epoch:>11,.2f}  "
-              f"{max_ohydx:>11,.0f}  ${fees_epoch:>12,.2f}{tag}")
+        vol_epoch = vol_24h * epoch_days * rate
+        fees_cols = "".join(
+            f"  ${vol_epoch * (bps / 10_000):>9,.0f}" for _, bps in scenarios
+        )
+        tag = "  ←" if rate == anchor_rate else ""
+        print(f"  {rate:>7.0%}  ${vol_epoch:>10,.0f}  {fees_cols}{tag}")
+        if rate == anchor_rate:
+            avg_fees_epoch = vol_epoch * (avg_bps / 10_000)
+            rec_budget_usd = avg_fees_epoch
+            rec_ohydx      = avg_fees_epoch / ohydx_unit_cost if ohydx_unit_cost else 0
 
     # ── 2. Recommended starting budget ───────────────────────────────────────
-    print(f"\n  2. Recommended starting budget  (10% capture, break-even)")
+    print(f"\n  2. Recommended starting budget  ({anchor_rate:.0%} capture, avg fee ~{avg_bps:.1f}bps, break-even)")
     print(f"     {rec_ohydx:,.0f} oHYDX / epoch")
     print(f"     Cost to Hydrex: ${rec_budget_usd:,.2f}  "
-          f"(at HYDX ${hydx:.5f} × {bc['ohydx_discount']:.0%} discount)")
-    print(f"     Implies ~${vol_24h * epoch_days * 0.10:,.0f} of volume "
-          f"routed through Hydrex per epoch from ${vol_24h:,.0f}/day external pool")
+          f"(HYDX ${hydx:.5f} × {bc['ohydx_discount']:.0%} discount)")
+    print(f"     Implies ~${vol_24h * epoch_days * anchor_rate:,.0f} vol/epoch routed through Hydrex")
+    print(f"     At floor fee ({floor_bps:.1f}bps) the same budget needs "
+          f"{vol_24h * epoch_days * anchor_rate * (avg_bps / floor_bps):,.0f} vol to break even "
+          f"({anchor_rate * (avg_bps / floor_bps):.0%} capture)")
 
     # ── 3. Cut rules ─────────────────────────────────────────────────────────
-    print(f"\n  3. Cut rules")
+    print(f"\n  3. Cut rules  (budget = {rec_ohydx:,.0f} oHYDX, avg fee scenario)")
     for epoch in sorted(cut_thresholds):
-        thresh    = cut_thresholds[epoch]
-        min_fees  = rec_budget_usd * thresh
-        min_vol   = min_fees / (fee_bps / 10_000) if fee_bps else 0
+        thresh   = cut_thresholds[epoch]
+        min_fees = rec_budget_usd * thresh
+        min_vol  = min_fees / (avg_bps / 10_000) if avg_bps else 0
         if thresh < 1.0:
-            action = f"cut → not on trajectory  (need ${min_fees:,.2f} fees, "
-            action += f"~${min_vol:,.0f} vol)"
+            action = f"cut  (need ≥${min_fees:,.0f} fees, ~${min_vol:,.0f} vol at avg fee)"
         else:
-            action = f"cut unless improving  (need ${min_fees:,.2f} fees = break-even)"
+            action = f"cut unless trajectory improving  (need ≥${min_fees:,.0f} = break-even)"
         print(f"     Epoch {epoch}: fees/incentive < {thresh:.0%}  →  {action}")
     print(f"     Hard cut: TVL < ${router_tvl:,} after epoch 1  (no routing materialised)")
     print(f"     Hard cut: ratio falls epoch-over-epoch  (no growth trajectory)")
@@ -171,10 +189,10 @@ def analyze(row: dict, cfg: dict) -> None:
     }
     for k in ["baseFee", "alpha1", "alpha2", "beta1", "beta2", "gamma1", "gamma2"]:
         print(f"     {k:<10}  {profile[k]:>7}   {notes[k]}")
-    print(f"     max_fee_pips = {max_fee}  ({max_fee / 100:.1f} bps at peak volatility)")
-    print(f"     → Floor undercuts incumbent ({fee_bps:.0f} bps) by "
-          f"{fee_bps - profile['baseFee']/100:.1f} bps; "
-          f"spikes to {max_fee/100:.1f} bps during high vol to protect LPs")
+    print(f"     max_fee_pips = {max_fee_pips}  ({peak_bps:.1f} bps at peak volatility)")
+    print(f"     → Floor undercuts incumbent ({ext_bps:.0f} bps) by "
+          f"{ext_bps - floor_bps:.1f} bps; "
+          f"spikes to {peak_bps:.1f} bps during high vol to protect LPs")
 
 
 def main():
