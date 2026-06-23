@@ -40,12 +40,20 @@ All thresholds and weights live in selection_config.json -> retention_scorecard.
 
 Usage:
   python retention_scorecard.py [--no-color] [--no-html] [--refresh-market]
+                                [--image] [--highlight "PAIR,PAIR"]
+
+  --image renders retention_scorecard.png via headless Chrome (set CHROME_BIN if
+  Chrome isn't auto-found); --highlight marks the current vote-list pools.
 """
 
 import argparse
 import csv
 import json
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -53,10 +61,18 @@ TRACKER_CSV = SCRIPT_DIR / "data" / "bootstrap_tracker.csv"
 SCORECARD_CSV = SCRIPT_DIR / "data" / "retention_scorecard.csv"
 MARKET_FEES_CSV = SCRIPT_DIR / "data" / "market_fees.csv"
 DASHBOARD_HTML = SCRIPT_DIR / "retention.html"
+IMAGE_PNG = SCRIPT_DIR / "retention_scorecard.png"
 CONFIG_FILE = SCRIPT_DIR / "selection_config.json"
 
 # Total Hydrex CLAMM fees per epoch = sum of every pool's fees from this endpoint.
 HYDREX_EPOCH_API = "https://staging.api.hydrex.fi/stats/clamm-pool-epoch-data"
+
+# Headless-Chrome candidates for --image (override with env CHROME_BIN).
+CHROME_CANDIDATES = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+]
 
 # Defaults used when selection_config.json has no retention_scorecard block.
 DEFAULTS = {
@@ -654,10 +670,111 @@ renderChart();
     DASHBOARD_HTML.write_text(html)
 
 
+def find_chrome() -> str:
+    """Locate a Chrome/Chromium binary for headless screenshots, or '' if none."""
+    env = os.environ.get("CHROME_BIN")
+    if env and (Path(env).exists() or shutil.which(env)):
+        return env
+    for c in CHROME_CANDIDATES:
+        if Path(c).exists() or shutil.which(c):
+            return c
+    return ""
+
+
+def build_image_html(cards: list, cfg: dict, highlight: set) -> str:
+    """Static, self-contained HTML (no JS/CDN) tuned for a headless screenshot."""
+    keep_th, cut_th = cfg["thresholds"]["keep"], cfg["thresholds"]["cut"]
+
+    def fnum_(v, d=2):
+        try:
+            return f"{float(v):.{d}f}"
+        except (TypeError, ValueError):
+            return "–"
+
+    def share(v):
+        try:
+            return f"{float(v):.2f}%"
+        except (TypeError, ValueError):
+            return "–"
+
+    def strend(t):
+        return {"up": '<span style="color:#3fb950">▲</span>',
+                "down": '<span style="color:#f85149">▼</span>',
+                "flat": "·"}.get(t, "–")
+
+    trs = []
+    for r in cards:
+        hl = ' style="border-left:3px solid #58a6ff"' if r["pair"] in highlight else ""
+        col = REC_COLOR.get(r["recommendation"], "#8b949e")
+        net = float(r["net_usd"])
+        netc = "#3fb950" if net >= 0 else "#f85149"
+        trs.append(
+            f"<tr{hl}>"
+            f"<td><b>{r['pair']}</b> <span class=ep>ep {r['epoch_range']}</span></td>"
+            f"<td><span class=badge style=\"background:{col}\">{r['recommendation']}</span></td>"
+            f"<td class=num><b>{fnum_(r['retention_score'])}</b></td>"
+            f"<td class=num>{fnum_(r['fees_tvl_pct_mean'])}%</td>"
+            f"<td class=num>{fnum_(r['fees_per_incentive_wmean'])}</td>"
+            f"<td class=num>{share(r['market_share_pct_latest'])}</td>"
+            f"<td class=num>{strend(r['share_trend'])}</td>"
+            f"<td class=num>{round(float(r['tvl_retention'])*100)}%</td>"
+            f"<td class=num style=\"color:{netc}\">${net:,.0f}</td>"
+            f"<td class=why>{r['reason']}</td></tr>"
+        )
+
+    hl_note = " · <b style=\"color:#58a6ff\">blue bar</b> = current vote list" if highlight else ""
+    return f"""<html><head><meta charset=utf-8><style>
+body{{margin:0;background:#0d1117;color:#e6edf3;font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:22px;width:1180px}}
+h1{{margin:0 0 4px;font-size:20px}} .sub{{color:#8b949e;font-size:12px;margin-bottom:14px}}
+table{{width:100%;border-collapse:collapse;background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:hidden}}
+th,td{{padding:7px 10px;text-align:left;border-bottom:1px solid #30363d;font-size:12px;white-space:nowrap}}
+th{{background:rgba(255,255,255,.03);color:#8b949e;text-transform:uppercase;font-size:10px;letter-spacing:.5px}}
+td.num,th.num{{text-align:right;font-variant-numeric:tabular-nums}}
+.badge{{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;color:#0d1117}}
+.ep{{color:#8b949e;font-size:10px}} .why{{color:#8b949e;font-size:11px;white-space:normal;max-width:360px}}
+.legend{{color:#8b949e;font-size:11px;margin-top:10px}}
+</style></head><body>
+<h1>Hydrex Bootstrap — Retention Scorecard</h1>
+<div class=sub>KEEP ≥ {keep_th} · CUT ≤ {cut_th}{hl_note} · Mkt share &amp; ▲▼ strip market-wide fee moves (beta vs alpha)</div>
+<table>
+<thead><tr><th>Pair</th><th>Call</th><th class=num>Score</th><th class=num>Fee/TVL</th><th class=num>f/i (wmean)</th><th class=num>Mkt share</th><th class=num>Shr</th><th class=num>TVL kept</th><th class=num>Net P&amp;L</th><th>Why</th></tr></thead>
+<tbody>{''.join(trs)}</tbody></table>
+<div class=legend>f/i = $fees per $1 incentive · break-even = 1.0</div>
+</body></html>"""
+
+
+def render_image(cards: list, cfg: dict, highlight: set):
+    """Screenshot the scorecard to a PNG via headless Chrome."""
+    chrome = find_chrome()
+    if not chrome:
+        print("Chrome/Chromium not found — set CHROME_BIN to use --image.", file=sys.stderr)
+        return
+    html = build_image_html(cards, cfg, highlight)
+    height = 260 + len(cards) * 34
+    tmp = Path(tempfile.gettempdir()) / "retention_scorecard_img.html"
+    tmp.write_text(html)
+    try:
+        subprocess.run(
+            [chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
+             "--force-device-scale-factor=2", f"--screenshot={IMAGE_PNG}",
+             f"--window-size=1224,{height}", f"file://{tmp}"],
+            check=True, capture_output=True, timeout=60,
+        )
+        print(f"Image written: {IMAGE_PNG}")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        print(f"Image render failed: {e}", file=sys.stderr)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Build the Hydrex retention scorecard.")
     ap.add_argument("--no-color", action="store_true", help="plain console output")
     ap.add_argument("--no-html", action="store_true", help="skip retention.html")
+    ap.add_argument("--image", action="store_true",
+                    help="also render retention_scorecard.png via headless Chrome (set CHROME_BIN if needed).")
+    ap.add_argument("--highlight", default="",
+                    help="comma-separated pairs to mark with a blue bar in the image, e.g. 'WETH/NOCK,LFI/USDC'.")
     ap.add_argument("--refresh-market", action="store_true",
                     help="Fetch total Hydrex fees per epoch from the API and update "
                          "data/market_fees.csv before scoring (needed for share metrics).")
@@ -689,6 +806,10 @@ def main():
     if not args.no_html:
         render_dashboard(cards, cfg)
         print(f"Dashboard written: {DASHBOARD_HTML}")
+
+    if args.image:
+        highlight = {p.strip() for p in args.highlight.split(",") if p.strip()}
+        render_image(cards, cfg, highlight)
 
 
 if __name__ == "__main__":
