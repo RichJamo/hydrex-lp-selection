@@ -589,11 +589,57 @@ def select_week_by_epoch(weeks: list, hydrex_epoch: int) -> dict:
     )
 
 
+def preview_epoch(pools, epoch_pools, campaigns, epoch_start_iso, epoch_end_iso, hydx_price):
+    """Print a live mid-epoch snapshot WITHOUT touching the tracker.
+
+    Fees accrue over the epoch, but the incentive figure (campaign totalRewards)
+    is the FULL-epoch amount, so so-far f/i and fee/TVL are understated. The
+    'proj' columns pro-rate fees by 1/elapsed_fraction for a comparable
+    full-epoch estimate. TVL is the live current value (accurate as a snapshot).
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+    start = dt.datetime.fromisoformat(epoch_start_iso.replace("Z", "+00:00"))
+    end = dt.datetime.fromisoformat(epoch_end_iso.replace("Z", "+00:00"))
+    total = (end - start).total_seconds()
+    elapsed = max(0.0, min((now - start).total_seconds(), total))
+    frac = elapsed / total if total > 0 else 1.0
+
+    if now >= end:
+        print(f"\nEpoch already closed — figures are final.")
+    else:
+        print(f"\n⚠ PARTIAL: {elapsed/86400:.1f} of {total/86400:.0f} days elapsed "
+              f"({frac:.0%}). Fees so-far are understated vs the full incentive; "
+              f"'proj' columns pro-rate fees by 1/{frac:.2f}.")
+
+    hdr = (f"{'PAIR':16} {'TVL now':>10} {'fees s/f':>9} {'incentive':>10} "
+           f"{'f/i s/f':>8} {'f/i proj':>9} {'feeTVL proj':>12}")
+    print("\n" + hdr)
+    print("-" * len(hdr))
+    rows = []
+    for pool in pools:
+        m = compute_metrics(pool["pool_address"], epoch_pools, campaigns,
+                            epoch_start_iso, epoch_end_iso, hydx_price)
+        pair = pool.get("pair") or m.get("title") or pool["pool_address"][:10]
+        fi_sf = m["fees_per_incentive_usd"]
+        rows.append((pair, m, fi_sf, fi_sf / frac if frac > 0 else fi_sf,
+                     m["fees_tvl_pct"] / frac if frac > 0 else m["fees_tvl_pct"]))
+    for pair, m, fi_sf, fi_proj, feetvl_proj in sorted(rows, key=lambda x: -x[3]):
+        print(f"{pair[:16]:16} {m['tvl_end_usd']:>10,.0f} {m['fees_usd']:>9,.0f} "
+              f"{m['incentives_usd']:>10,.0f} {fi_sf:>8.2f} {fi_proj:>9.2f} {feetvl_proj:>10.2f}%")
+    print("-" * len(hdr))
+    print("(read-only — tracker not modified)")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Record per-epoch bootstrap outcomes.")
     ap.add_argument(
         "--epoch", type=int, default=None,
         help="Hydrex epoch to measure (backfill). Default: auto-select the closing epoch.",
+    )
+    ap.add_argument(
+        "--preview", action="store_true",
+        help="Read-only mid-epoch snapshot: print live metrics WITHOUT writing the tracker "
+             "or dashboard. Fees/f-i are partial; a pro-rated projection is also shown.",
     )
     args = ap.parse_args()
 
@@ -613,13 +659,16 @@ def main():
     epoch_end = week["epoch_end"] + "T00:00:00Z"
     pools = week.get("pools", [])
 
-    print(f"Bootstrap update: Hydrex epoch {hydrex_epoch} ({week['epoch_start']} → {week['epoch_end']})")
+    mode = "PREVIEW (read-only, partial)" if args.preview else "update"
+    print(f"Bootstrap {mode}: Hydrex epoch {hydrex_epoch} ({week['epoch_start']} → {week['epoch_end']})")
     print(f"Pools: {len(pools)}")
 
-    # Clear any zero-stub rows from earlier botched runs of this epoch
-    purged = purge_stub_rows_for_epoch(hydrex_epoch)
-    if purged:
-        print(f"Purged {purged} stub row(s) for epoch {hydrex_epoch} — will re-record with real data")
+    # Clear any zero-stub rows from earlier botched runs of this epoch.
+    # Skipped in preview — preview must never mutate the tracker.
+    if not args.preview:
+        purged = purge_stub_rows_for_epoch(hydrex_epoch)
+        if purged:
+            print(f"Purged {purged} stub row(s) for epoch {hydrex_epoch} — will re-record with real data")
 
     # Fetch heavy endpoints ONCE, reuse across all pools (was 2N+1 calls, now exactly 3)
     print("\nFetching APIs (3 calls total, regardless of pool count)...")
@@ -629,6 +678,10 @@ def main():
     print(f"  Epoch {hydrex_epoch} data: {len(epoch_pools)} pools cached")
     campaigns = fetch_campaigns()
     print(f"  Campaigns: {len(campaigns)} cached")
+
+    if args.preview:
+        preview_epoch(pools, epoch_pools, campaigns, epoch_start, epoch_end, hydx_price)
+        return
 
     rows_added = []
     for pool in pools:
