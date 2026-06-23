@@ -308,7 +308,7 @@
       "epoch_start": "2026-06-11",
       "epoch_end": "2026-06-18",
       "report_date_utc": "2026-06-18T02:00:00Z",
-      "_source": "Drafted from Austin's 2026-06-15 Discord vote list (epoch 06-11→06-18). New-pair pool_addresses resolved from the Hydrex Goldsky subgraph (single match each) — Austin to confirm they are the pools he incentivized.",
+      "_source": "Drafted from Austin's 2026-06-15 Discord vote list (epoch 06-11→06-18); addresses resolved from the Hydrex Goldsky subgraph and confirmed by Austin 2026-06-23. VVV/cbBTC and cbADA/cbBTC were moved to epoch 40 — Austin confirmed they were created just ahead of ep40 (no ep39 campaign or activity).",
       "pools": [
         {
           "pair": "AUKI/USDC",
@@ -337,14 +337,6 @@
         {
           "pair": "BIO/WETH",
           "pool_address": "0x4bff50d91bc2fde06f31a91a781bd461f69e9bd8"
-        },
-        {
-          "pair": "VVV/cbBTC",
-          "pool_address": "0xb651439c9b086c7b4399c623e54deebcb3905f17"
-        },
-        {
-          "pair": "cbADA/cbBTC",
-          "pool_address": "0xe8c3c7f1f845bc17e6964d42d84b21f97b12fcc0"
         }
       ]
     },
@@ -354,7 +346,7 @@
       "epoch_start": "2026-06-18",
       "epoch_end": "2026-06-25",
       "report_date_utc": "2026-06-25T02:00:00Z",
-      "_source": "Drafted from Austin's 2026-06-22 Discord vote list (epoch 06-18→06-25): top-5 fee/TVL + DEGEN, VVV/USDC excluded (treasury allocation). New-pair pool_addresses resolved from the Hydrex Goldsky subgraph (single match each) — Austin to confirm.",
+      "_source": "Drafted from Austin's 2026-06-22 Discord vote list (epoch 06-18→06-25): top-5 fee/TVL + DEGEN, VVV/USDC excluded (treasury allocation). VVV/cbBTC and cbADA/cbBTC added as initial pools created ahead of ep40 (addresses confirmed by Austin 2026-06-23). New-pair addresses resolved from the Hydrex Goldsky subgraph; Austin to confirm the rest of the roster.",
       "pools": [
         {
           "pair": "WETH/CHECK",
@@ -379,6 +371,14 @@
         {
           "pair": "DEGEN/USDC",
           "pool_address": "0xd2dd277feeec88405db3741239b0a9a96d01692d"
+        },
+        {
+          "pair": "VVV/cbBTC",
+          "pool_address": "0xB651439c9B086c7B4399C623e54dEeBCb3905f17"
+        },
+        {
+          "pair": "cbADA/cbBTC",
+          "pool_address": "0xe8C3C7f1f845bc17E6964D42D84B21F97b12FCC0"
         }
       ]
     }
