@@ -19,6 +19,40 @@
     "_cut_thresholds_note": "Minimum fees/incentive ratio required at end of each epoch to continue. Epoch 3 must be self-sustaining."
   },
 
+  "retention_scorecard": {
+    "_comment": "Parameters for retention_scorecard.py. Aggregates bootstrap_tracker.csv into a per-pool KEEP/WATCH/CUT call. Weights need not sum to 1 (normalized in code).",
+    "min_incentive_usd": 1.0,
+    "_min_incentive_note": "Epochs with incentive below this are excluded from f/i stats (unfunded/stub rows).",
+    "profit_threshold": 1.0,
+    "_profit_threshold_note": "f/i at or above this counts as a 'profitable' (break-even) epoch.",
+    "dead_tvl_usd": 50.0,
+    "_dead_tvl_note": "If the latest epoch's avg TVL is below this, the pool is DEAD.",
+    "min_epochs_for_history": 2,
+    "_min_epochs_note": "Pools with fewer funded epochs than this are flagged NEW (insufficient track record).",
+    "trend_epsilon": 0.10,
+    "_trend_epsilon_note": "Change in f/i (latest minus first) beyond this is 'up'/'down', else 'flat'.",
+    "normalization_caps": {
+      "fees_per_incentive": 1.5,
+      "fees_tvl_pct": 5.0
+    },
+    "weights": {
+      "efficiency": 0.35,
+      "productivity": 0.25,
+      "stickiness": 0.20,
+      "consistency": 0.15,
+      "trend": 0.05
+    },
+    "_weights_note": "efficiency=recency-weighted $Fees/$Incentive; productivity=$Fees/$TVL (Austin's Jun 2026 ranking metric); stickiness=TVL kept vs peak + within-epoch hold; consistency=share of epochs clearing break-even; trend=f/i improving vs decaying.",
+    "thresholds": {
+      "keep": 0.55,
+      "cut": 0.25
+    },
+    "cut_tvl_retention": 0.30,
+    "_cut_tvl_retention_note": "Below this share of peak TVL, a never-profitable pool is a CUT regardless of score.",
+    "treasury_exclude": ["USDC/VVV", "VVV/USDC"],
+    "_treasury_exclude_note": "Pairs/addresses flagged TREASURY: scored but excluded from the incentive-budget call. VVV has a treasury allocation (Austin, Jun 2026)."
+  },
+
   "candidate_filters": {
     "_comment": "Agreed in the Jun 9 2026 Rich<>Austin meeting: strip meme coins and illiquid junk.",
     "min_liquidity_usd": 50000,
