@@ -13,6 +13,7 @@ Data sources:
   - HYDX price (DEXScreener): used to convert oHYDX -> USD via HYDX*0.7
 """
 
+import argparse
 import csv
 import datetime as dt
 import json
@@ -577,15 +578,35 @@ def purge_stub_rows_for_epoch(hydrex_epoch: int) -> int:
     return removed
 
 
+def select_week_by_epoch(weeks: list, hydrex_epoch: int) -> dict:
+    """Return the configured week for a specific hydrex_epoch (for backfills)."""
+    for w in weeks:
+        if int(w.get("hydrex_epoch", -1)) == hydrex_epoch:
+            return w
+    configured = ", ".join(str(w.get("hydrex_epoch")) for w in weeks)
+    raise SystemExit(
+        f"Epoch {hydrex_epoch} not in {PICKS_FILE.name}. Configured: {configured}"
+    )
+
+
 def main():
+    ap = argparse.ArgumentParser(description="Record per-epoch bootstrap outcomes.")
+    ap.add_argument(
+        "--epoch", type=int, default=None,
+        help="Hydrex epoch to measure (backfill). Default: auto-select the closing epoch.",
+    )
+    args = ap.parse_args()
+
     picks = json.loads(PICKS_FILE.read_text())
     weeks = picks.get("weeks", [])
     if not weeks:
         print("No bootstrap weeks configured", file=sys.stderr)
         sys.exit(1)
 
-    # Select the CLOSING epoch — not weeks[-1], which is typically the upcoming one
-    week = select_week_to_measure(weeks)
+    # --epoch backfills a specific past epoch; otherwise auto-select the CLOSING
+    # epoch — not weeks[-1], which is typically the upcoming one.
+    week = select_week_by_epoch(weeks, args.epoch) if args.epoch is not None \
+        else select_week_to_measure(weeks)
     hydrex_epoch = week["hydrex_epoch"]
     aero_epoch = week.get("aero_epoch", hydrex_epoch + 107)
     epoch_start = week["epoch_start"] + "T00:00:00Z"
