@@ -23,6 +23,14 @@ Recommendation = KEEP / WATCH / CUT, plus the special states NEW (too little
 history), DEAD (TVL gone), TREASURY (config-excluded, e.g. VVV/USDC which has a
 treasury allocation and shouldn't compete for incentive budget).
 
+Market-relative read (beta vs alpha): in a down market a pool's absolute f/i
+falls with the tide. `market_share` = the pool's fees as a share of total Hydrex
+CLAMM fees that epoch; `share_trend` tells you whether the pool is gaining or
+losing ground *independent of* market conditions. The decay guard uses it so a
+pool holding/gaining share is not flagged as decaying merely because the whole
+market dropped. Market totals are cached offline in data/market_fees.csv and
+refreshed from the Hydrex epoch API via `--refresh-market`.
+
 Outputs:
   - data/retention_scorecard.csv  (one row per pool, sorted by score desc)
   - retention.html                (dashboard styled like bootstrap.html)
@@ -31,7 +39,7 @@ Outputs:
 All thresholds and weights live in selection_config.json -> retention_scorecard.
 
 Usage:
-  python retention_scorecard.py [--no-color] [--no-html]
+  python retention_scorecard.py [--no-color] [--no-html] [--refresh-market]
 """
 
 import argparse
@@ -43,8 +51,12 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 TRACKER_CSV = SCRIPT_DIR / "data" / "bootstrap_tracker.csv"
 SCORECARD_CSV = SCRIPT_DIR / "data" / "retention_scorecard.csv"
+MARKET_FEES_CSV = SCRIPT_DIR / "data" / "market_fees.csv"
 DASHBOARD_HTML = SCRIPT_DIR / "retention.html"
 CONFIG_FILE = SCRIPT_DIR / "selection_config.json"
+
+# Total Hydrex CLAMM fees per epoch = sum of every pool's fees from this endpoint.
+HYDREX_EPOCH_API = "https://staging.api.hydrex.fi/stats/clamm-pool-epoch-data"
 
 # Defaults used when selection_config.json has no retention_scorecard block.
 DEFAULTS = {
@@ -58,6 +70,8 @@ DEFAULTS = {
     "_min_epochs_note": "Pools with fewer incentivized epochs than this are flagged NEW (insufficient track record).",
     "trend_epsilon": 0.10,
     "_trend_epsilon_note": "Change in f/i (latest minus first) larger than this is 'up'/'down', else 'flat'.",
+    "share_trend_epsilon": 0.10,
+    "_share_trend_epsilon_note": "Change in fee-share-of-market (latest minus first, in pct points) beyond this is 'up'/'down', else 'flat'. Strips market beta from the decay call.",
     "normalization_caps": {
         "fees_per_incentive": 1.5,
         "_fees_per_incentive_note": "f/i at/above this maps to a perfect efficiency sub-score.",
@@ -124,7 +138,53 @@ def load_rows() -> list:
         return list(csv.DictReader(f))
 
 
-def aggregate_pool(addr: str, epochs: list, cfg: dict, global_max_epoch: int) -> dict:
+def load_market_fees() -> dict:
+    """Read cached total Hydrex CLAMM fees per epoch. {epoch:int -> total_fees:float}.
+
+    Empty if the cache is missing — the scorecard then degrades gracefully
+    (share columns blank). Refresh it with `--refresh-market`.
+    """
+    if not MARKET_FEES_CSV.exists():
+        return {}
+    out = {}
+    with open(MARKET_FEES_CSV, newline="") as f:
+        for r in csv.DictReader(f):
+            try:
+                out[int(r["hydrex_epoch"])] = float(r["total_fees_usd"])
+            except (KeyError, TypeError, ValueError):
+                continue
+    return out
+
+
+def refresh_market_fees(epochs: list) -> dict:
+    """Fetch total Hydrex CLAMM fees for each epoch from the API and cache them.
+
+    Network call (one per epoch). Returns {epoch -> total_fees}. Epochs that
+    return no pools are recorded as 0.0 (share undefined for that epoch).
+    """
+    import requests  # local import keeps the default offline path dependency-free
+
+    totals = {}
+    for ep in sorted(set(epochs)):
+        try:
+            r = requests.get(f"{HYDREX_EPOCH_API}/{ep}", timeout=30)
+            r.raise_for_status()
+            pools = r.json().get("pools", [])
+            totals[ep] = round(sum(float(p.get("fees") or 0) for p in pools), 2)
+            print(f"  market ep{ep}: ${totals[ep]:,.0f} ({len(pools)} pools)")
+        except Exception as e:  # noqa: BLE001 — best-effort cache refresh
+            print(f"  market ep{ep}: fetch failed ({e}) — left out", file=sys.stderr)
+    if totals:
+        with open(MARKET_FEES_CSV, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["hydrex_epoch", "total_fees_usd"])
+            for ep in sorted(totals):
+                w.writerow([ep, totals[ep]])
+    return totals
+
+
+def aggregate_pool(addr: str, epochs: list, cfg: dict, global_max_epoch: int,
+                   market_fees: dict) -> dict:
     """Collapse a pool's epoch rows (sorted ascending) into one scorecard row."""
     min_inc = cfg["min_incentive_usd"]
     profit = cfg["profit_threshold"]
@@ -186,6 +246,31 @@ def aggregate_pool(addr: str, epochs: list, cfg: dict, global_max_epoch: int) ->
     else:
         trend = "flat"
 
+    # --- market share (beta vs alpha) ---
+    # Fee share of total Hydrex CLAMM fees, measured over the SAME funded epochs
+    # as f/i so the two are comparable. Using funded epochs (not all present
+    # epochs) avoids anchoring the trend on a pre-funding launch epoch whose
+    # near-zero share would make a declining pool falsely read as "gaining".
+    share_vals = []
+    for r in funded:
+        en = int(fnum(r, "hydrex_epoch"))
+        mt = market_fees.get(en, 0)
+        if mt > 0:
+            share_vals.append(fnum(r, "fees_usd") / mt * 100)
+    if share_vals:
+        market_share_pct_latest = share_vals[-1]
+        market_share_pct_mean = sum(share_vals) / len(share_vals)
+        if len(share_vals) >= 2:
+            share_delta = share_vals[-1] - share_vals[0]
+            seps = cfg["share_trend_epsilon"]
+            share_trend = "up" if share_delta > seps else "down" if share_delta < -seps else "flat"
+        else:
+            share_delta = 0.0
+            share_trend = "n/a"
+    else:
+        market_share_pct_latest = market_share_pct_mean = share_delta = None
+        share_trend = "n/a"
+
     # --- lifetime P&L ---
     total_fees = sum(fnum(r, "fees_usd") for r in epochs)
     total_incentive = sum(fnum(r, "incentives_usd") for r in epochs)
@@ -213,7 +298,7 @@ def aggregate_pool(addr: str, epochs: list, cfg: dict, global_max_epoch: int) ->
     rec, reason = recommend(
         cfg, pair, addr, retention_score, fi_latest, fi_wmean, epochs_incentivized,
         tvl_avg_latest, tvl_retention, profitable_ratio, trend,
-        latest_epoch, global_max_epoch,
+        latest_epoch, global_max_epoch, share_trend,
     )
 
     return {
@@ -231,6 +316,10 @@ def aggregate_pool(addr: str, epochs: list, cfg: dict, global_max_epoch: int) ->
         "fees_tvl_pct_wmean": round(fees_tvl_pct_wmean, 4),
         "fees_per_incentive_latest": round(fi_latest, 4),
         "fees_per_incentive_wmean": round(fi_wmean, 4),
+        "market_share_pct_latest": round(market_share_pct_latest, 4) if market_share_pct_latest is not None else "",
+        "market_share_pct_mean": round(market_share_pct_mean, 4) if market_share_pct_mean is not None else "",
+        "share_delta_pct": round(share_delta, 4) if share_delta is not None else "",
+        "share_trend": share_trend,
         "profitable_epochs": profitable_epochs,
         "profitable_ratio": round(profitable_ratio, 4),
         "trend": trend,
@@ -246,12 +335,13 @@ def aggregate_pool(addr: str, epochs: list, cfg: dict, global_max_epoch: int) ->
 
 
 def recommend(cfg, pair, addr, score, fi_latest, fi_wmean, n_inc, tvl_latest, tvl_ret,
-              profitable_ratio, trend, latest_epoch, global_max_epoch):
+              profitable_ratio, trend, latest_epoch, global_max_epoch, share_trend):
     """Map metrics to a KEEP/WATCH/CUT/NEW/DEAD/TREASURY call + one-line reason."""
     th = cfg["thresholds"]
     profit = cfg["profit_threshold"]
     excl = {str(x).lower() for x in cfg.get("treasury_exclude", [])}
     dropped = latest_epoch < global_max_epoch  # not run in the most recent epoch
+    share_note = {"up": " · gaining share", "down": " · losing share"}.get(share_trend, "")
 
     # Treasury pools are scored but don't compete for the incentive budget.
     if pair.lower() in excl or addr.lower() in excl:
@@ -267,27 +357,31 @@ def recommend(cfg, pair, addr, score, fi_latest, fi_wmean, n_inc, tvl_latest, tv
     # break-even) must not be rescued to KEEP by a blended score that an old
     # great epoch still inflates. AORA (1.88 -> 0.04) is the case this catches;
     # using fi_wmean (not fi_latest) spares a strong pool like LFI a soft week.
-    decaying = trend == "down" and fi_wmean < profit
+    # Market-beta filter: a pool GAINING fee share has an f/i drop driven by the
+    # market falling, not the pool failing — so don't call it decaying.
+    decaying = trend == "down" and fi_wmean < profit and share_trend != "up"
 
     # Strong, current signal -> keep funding it.
     if fi_latest >= profit:
         tag = " (last run)" if dropped else ""
-        return "KEEP", f"Latest f/i {fi_latest:.2f} ≥ break-even{tag}"
+        return "KEEP", f"Latest f/i {fi_latest:.2f} ≥ break-even{tag}{share_note}"
     if score >= th["keep"] and not decaying:
-        return "KEEP", f"Score {score:.2f} ≥ keep threshold — efficient & sticky"
+        why = "f/i fell with the market but holding share" if trend == "down" and share_trend == "up" \
+            else "efficient & sticky"
+        return "KEEP", f"Score {score:.2f} ≥ keep threshold — {why}{share_note}"
 
     # Clear failure -> stop funding it.
     if profitable_ratio == 0 and tvl_ret < cfg["cut_tvl_retention"]:
-        return "CUT", f"Never broke even and TVL down to {tvl_ret:.0%} of peak"
+        return "CUT", f"Never broke even and TVL down to {tvl_ret:.0%} of peak{share_note}"
     if score <= th["cut"]:
-        return "CUT", f"Score {score:.2f} ≤ cut threshold — poor ROI/retention"
+        return "CUT", f"Score {score:.2f} ≤ cut threshold — poor ROI/retention{share_note}"
 
     # Everything else needs a human eye.
     direction = {"up": "improving", "down": "decaying", "flat": "flat"}.get(trend, "mixed")
-    return "WATCH", f"Score {score:.2f}, trend {direction} — re-up only if budget allows"
+    return "WATCH", f"Score {score:.2f}, trend {direction}{share_note} — re-up only if budget allows"
 
 
-def build_scorecard(rows: list, cfg: dict) -> list:
+def build_scorecard(rows: list, cfg: dict, market_fees: dict) -> list:
     by_pool = {}
     for r in rows:
         addr = (r.get("pool_address") or "").lower()
@@ -300,7 +394,7 @@ def build_scorecard(rows: list, cfg: dict) -> list:
     cards = []
     for addr, epochs in by_pool.items():
         epochs.sort(key=lambda r: int(fnum(r, "hydrex_epoch")))
-        cards.append(aggregate_pool(addr, epochs, cfg, global_max_epoch))
+        cards.append(aggregate_pool(addr, epochs, cfg, global_max_epoch, market_fees))
 
     cards.sort(key=lambda c: c["retention_score"], reverse=True)
     return cards
@@ -328,17 +422,23 @@ def print_table(cards: list, use_color: bool):
     def c(text, key):
         return f"{ANSI.get(key, '')}{text}{ANSI['reset']}" if use_color else text
 
-    hdr = f"{'PAIR':16} {'EPS':>3} {'FEE/TVL':>8} {'F/I lt':>7} {'F/I wm':>7} {'TVLret':>7} {'TREND':>6} {'SCORE':>6}  REC"
+    sh_abbr = {"up": "up", "down": "dn", "flat": "flat", "n/a": "-"}
+    hdr = (f"{'PAIR':16} {'EPS':>3} {'FEE/TVL':>8} {'F/I lt':>7} {'F/I wm':>7} "
+           f"{'MKT%':>6} {'SHTRD':>5} {'TVLret':>7} {'TREND':>6} {'SCORE':>6}  REC")
     print()
     print(c(hdr, "bold") if use_color else hdr)
     print("-" * len(hdr))
     for r in cards:
+        ms = r["market_share_pct_latest"]
+        ms_str = f"{ms:>5.2f}%" if isinstance(ms, (int, float)) else f"{'-':>6}"
         line = (
             f"{r['pair'][:16]:16} "
             f"{r['epochs_incentivized']:>3} "
             f"{r['fees_tvl_pct_mean']:>7.2f}% "
             f"{r['fees_per_incentive_latest']:>7.2f} "
             f"{r['fees_per_incentive_wmean']:>7.2f} "
+            f"{ms_str} "
+            f"{sh_abbr.get(r['share_trend'], r['share_trend']):>5} "
             f"{r['tvl_retention']*100:>6.0f}% "
             f"{r['trend']:>6} "
             f"{r['retention_score']:>6.2f}  "
@@ -432,6 +532,8 @@ def render_dashboard(cards: list, cfg: dict):
       <th class="num" data-k="fees_tvl_pct_mean">$Fee/$TVL</th>
       <th class="num" data-k="fees_per_incentive_latest">f/i (latest)</th>
       <th class="num" data-k="fees_per_incentive_wmean">f/i (wmean)</th>
+      <th class="num" data-k="market_share_pct_latest">Mkt share</th>
+      <th class="num" data-k="share_trend">Share trend</th>
       <th class="num" data-k="tvl_retention">TVL kept</th>
       <th class="num" data-k="trend">Trend</th>
       <th class="num" data-k="net_usd">Net P&amp;L</th>
@@ -449,6 +551,12 @@ const REC_COLOR = {rec_color_json};
 
 function pctFmt(n) {{ return (Number(n)||0).toFixed(2) + '%'; }}
 function num(n, d=2) {{ return (Number(n)||0).toFixed(d); }}
+function shareTrend(t) {{
+  if (t === 'up') return '<span style="color:var(--green)">▲ up</span>';
+  if (t === 'down') return '<span style="color:var(--red)">▼ down</span>';
+  if (t === 'flat') return 'flat';
+  return '–';
+}}
 function usd(n) {{
   n = Number(n)||0;
   const s = Math.abs(n) >= 1000 ? '$' + (n/1000).toFixed(1) + 'K' : '$' + n.toFixed(0);
@@ -488,6 +596,8 @@ function renderTable() {{
       <td class="num">${{pctFmt(c.fees_tvl_pct_mean)}}</td>
       <td class="num">${{num(c.fees_per_incentive_latest)}}</td>
       <td class="num">${{num(c.fees_per_incentive_wmean)}}</td>
+      <td class="num">${{c.market_share_pct_latest === '' || c.market_share_pct_latest == null ? '–' : pctFmt(c.market_share_pct_latest)}}</td>
+      <td class="num">${{shareTrend(c.share_trend)}}</td>
       <td class="num">${{Math.round(Number(c.tvl_retention)*100)}}%</td>
       <td class="num">${{c.trend}}</td>
       <td class="num ${{net>=0?'pos':'neg'}}">${{usd(net)}}</td>
@@ -548,11 +658,25 @@ def main():
     ap = argparse.ArgumentParser(description="Build the Hydrex retention scorecard.")
     ap.add_argument("--no-color", action="store_true", help="plain console output")
     ap.add_argument("--no-html", action="store_true", help="skip retention.html")
+    ap.add_argument("--refresh-market", action="store_true",
+                    help="Fetch total Hydrex fees per epoch from the API and update "
+                         "data/market_fees.csv before scoring (needed for share metrics).")
     args = ap.parse_args()
 
     cfg = load_config()
     rows = load_rows()
-    cards = build_scorecard(rows, cfg)
+
+    if args.refresh_market:
+        epochs = sorted({int(fnum(r, "hydrex_epoch")) for r in rows})
+        print("Refreshing market fees from the Hydrex epoch API...")
+        market_fees = refresh_market_fees(epochs)
+    else:
+        market_fees = load_market_fees()
+        if not market_fees:
+            print("Note: no data/market_fees.csv — share columns blank. "
+                  "Run with --refresh-market to populate.", file=sys.stderr)
+
+    cards = build_scorecard(rows, cfg, market_fees)
     if not cards:
         print("No pools to score — tracker is empty.")
         return

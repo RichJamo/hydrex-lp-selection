@@ -33,7 +33,7 @@ per epoch.
 | `hydrex_daily_pull.py` | (carried over) own-pool daily metrics from Hydrex subgraph. |
 | `weekly_bootstrap_update.py` | (carried over) per-epoch outcomes → `data/bootstrap_tracker.csv`. Our validation labels. |
 | `bootstrap_picks.json` | (carried over) which pools we're incentivizing each epoch. |
-| `retention_scorecard.py` | Aggregates `bootstrap_tracker.csv` per pool → KEEP/WATCH/CUT re-incentivize call. Outputs `data/retention_scorecard.csv` + `retention.html` + console table. Answers "which of our pools should we keep funding?" |
+| `retention_scorecard.py` | Aggregates `bootstrap_tracker.csv` per pool → KEEP/WATCH/CUT re-incentivize call. Outputs `data/retention_scorecard.csv` + `retention.html` + console table. Answers "which of our pools should we keep funding?" `--refresh-market` pulls total Hydrex fees/epoch into `data/market_fees.csv` for the fee-share (beta-vs-alpha) signal that filters market-wide drops out of the decay call. |
 
 Pipeline: `candidate_pull.py` → `fee_enrich.py` → `score.py`. Run the Aero proxy
 separately to build training data, then `score.py --feature-importance`.

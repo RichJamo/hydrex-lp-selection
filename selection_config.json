@@ -31,6 +31,8 @@
     "_min_epochs_note": "Pools with fewer funded epochs than this are flagged NEW (insufficient track record).",
     "trend_epsilon": 0.10,
     "_trend_epsilon_note": "Change in f/i (latest minus first) beyond this is 'up'/'down', else 'flat'.",
+    "share_trend_epsilon": 0.10,
+    "_share_trend_epsilon_note": "Change in fee-share-of-market (latest minus first, pct points) beyond this is 'up'/'down'. A pool gaining share is not flagged decaying even if absolute f/i fell (strips market beta). Populate share data with: python retention_scorecard.py --refresh-market.",
     "normalization_caps": {
       "fees_per_incentive": 1.5,
       "fees_tvl_pct": 5.0
