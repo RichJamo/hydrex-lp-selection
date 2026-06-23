@@ -42,10 +42,10 @@ CONFIG = json.loads((SCRIPT_DIR / "selection_config.json").read_text())
 IN_CSV = SCRIPT_DIR / "data" / "candidates_daily.csv"
 OUT_CSV = SCRIPT_DIR / "data" / "candidates_enriched.csv"
 
-RPC = os.environ.get(
-    CONFIG["fee_enrich"]["base_rpc_url_env"],
-    CONFIG["fee_enrich"]["default_base_rpc_url"],
-)
+# `or` (not get's default) so an env var that is present-but-empty — e.g. the
+# GitHub Action injecting an unset `${{ secrets.BASE_RPC_URL }}` — still falls
+# back to the public RPC instead of passing "" to Web3 (which raises MissingSchema).
+RPC = os.environ.get(CONFIG["fee_enrich"]["base_rpc_url_env"]) or CONFIG["fee_enrich"]["default_base_rpc_url"]
 
 GLOBALSTATE_ABI = {
     "inputs": [], "name": "globalState",
