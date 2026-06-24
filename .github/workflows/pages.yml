@@ -1,0 +1,47 @@
+name: Deploy dashboards (Pages)
+
+# Publishes the selection + retention + bootstrap dashboards to GitHub Pages.
+# Uses the "GitHub Actions" Pages deployment (not branch-based) so frequent
+# mid-epoch refreshes deploy a fresh artifact WITHOUT committing to git.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 min — best-effort; epoch data accrues slowly
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never run two deploys at once; a newer refresh supersedes an in-flight one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install requests web3
+      - name: Build site (regenerate dashboards + stamp timestamp)
+        env:
+          BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
+          THEGRAPH_API_KEY: ${{ secrets.THEGRAPH_API_KEY }}
+        run: python build_site.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
