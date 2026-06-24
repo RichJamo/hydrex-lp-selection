@@ -10,3 +10,6 @@ retention_scorecard.png
 
 # Pages build output (assembled in CI, deployed as an artifact — never committed)
 _site/
+
+# Live current-epoch dashboard — regenerated every deploy from the APIs, never committed
+live.html

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent
 SITE = ROOT / "_site"
 
 # Pages to publish. Missing files are skipped (e.g. picks.html until it exists).
-PAGES = ["index.html", "picks.html", "retention.html", "bootstrap.html", "hydrex_pools.html"]
+PAGES = ["index.html", "live.html", "picks.html", "retention.html", "bootstrap.html", "hydrex_pools.html"]
 
 STAMP = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -49,6 +49,8 @@ def regenerate():
     # Bootstrap: rebuild bootstrap.html from the committed tracker (does NOT record an epoch).
     import weekly_bootstrap_update as wb
     wb.render_dashboard()
+    # Live: current-epoch snapshot from the Hydrex APIs (read-only; writes live.html only).
+    subprocess.run([sys.executable, "weekly_bootstrap_update.py", "--live"], check=True, cwd=ROOT)
 
 
 def main():

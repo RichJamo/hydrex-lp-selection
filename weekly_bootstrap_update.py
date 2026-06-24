@@ -26,6 +26,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PICKS_FILE = SCRIPT_DIR / "bootstrap_picks.json"
 TRACKER_CSV = SCRIPT_DIR / "data" / "bootstrap_tracker.csv"
 DASHBOARD_HTML = SCRIPT_DIR / "bootstrap.html"
+LIVE_HTML = SCRIPT_DIR / "live.html"
 
 HYDREX_EPOCH_API = "https://staging.api.hydrex.fi/stats/clamm-pool-epoch-data"
 CAMPAIGNS_API = "https://incentives-api.hydrex.fi/campaigns"
@@ -589,13 +590,15 @@ def select_week_by_epoch(weeks: list, hydrex_epoch: int) -> dict:
     )
 
 
-def preview_epoch(pools, epoch_pools, campaigns, epoch_start_iso, epoch_end_iso, hydx_price):
-    """Print a live mid-epoch snapshot WITHOUT touching the tracker.
+def compute_preview(pools, epoch_pools, campaigns, epoch_start_iso, epoch_end_iso, hydx_price):
+    """Mid-epoch snapshot data WITHOUT touching the tracker.
 
     Fees accrue over the epoch, but the incentive figure (campaign totalRewards)
-    is the FULL-epoch amount, so so-far f/i and fee/TVL are understated. The
-    'proj' columns pro-rate fees by 1/elapsed_fraction for a comparable
-    full-epoch estimate. TVL is the live current value (accurate as a snapshot).
+    is the FULL-epoch amount, so so-far f/i and fee/TVL understate. The 'proj'
+    values pro-rate fees by 1/elapsed_fraction for a comparable full-epoch
+    estimate. TVL is the live current value (accurate as a snapshot).
+    Returns {elapsed_frac, days_elapsed, total_days, closed, rows[]} with rows
+    sorted by projected f/i descending.
     """
     now = dt.datetime.now(dt.timezone.utc)
     start = dt.datetime.fromisoformat(epoch_start_iso.replace("Z", "+00:00"))
@@ -604,10 +607,38 @@ def preview_epoch(pools, epoch_pools, campaigns, epoch_start_iso, epoch_end_iso,
     elapsed = max(0.0, min((now - start).total_seconds(), total))
     frac = elapsed / total if total > 0 else 1.0
 
-    if now >= end:
-        print(f"\nEpoch already closed — figures are final.")
+    rows = []
+    for pool in pools:
+        m = compute_metrics(pool["pool_address"], epoch_pools, campaigns,
+                            epoch_start_iso, epoch_end_iso, hydx_price)
+        fi_sf = m["fees_per_incentive_usd"]
+        rows.append({
+            "pair": pool.get("pair") or m.get("title") or pool["pool_address"][:10],
+            "tvl_now": m["tvl_end_usd"],
+            "fees_sofar": m["fees_usd"],
+            "incentive": m["incentives_usd"],
+            "fi_sofar": fi_sf,
+            "fi_proj": fi_sf / frac if frac > 0 else fi_sf,
+            "feetvl_proj": m["fees_tvl_pct"] / frac if frac > 0 else m["fees_tvl_pct"],
+        })
+    rows.sort(key=lambda r: -r["fi_proj"])
+    return {
+        "elapsed_frac": frac,
+        "days_elapsed": elapsed / 86400.0,
+        "total_days": total / 86400.0,
+        "closed": now >= end,
+        "rows": rows,
+    }
+
+
+def preview_epoch(pools, epoch_pools, campaigns, epoch_start_iso, epoch_end_iso, hydx_price):
+    """Print the mid-epoch snapshot to the console (read-only)."""
+    p = compute_preview(pools, epoch_pools, campaigns, epoch_start_iso, epoch_end_iso, hydx_price)
+    frac = p["elapsed_frac"]
+    if p["closed"]:
+        print("\nEpoch already closed — figures are final.")
     else:
-        print(f"\n⚠ PARTIAL: {elapsed/86400:.1f} of {total/86400:.0f} days elapsed "
+        print(f"\n⚠ PARTIAL: {p['days_elapsed']:.1f} of {p['total_days']:.0f} days elapsed "
               f"({frac:.0%}). Fees so-far are understated vs the full incentive; "
               f"'proj' columns pro-rate fees by 1/{frac:.2f}.")
 
@@ -615,19 +646,88 @@ def preview_epoch(pools, epoch_pools, campaigns, epoch_start_iso, epoch_end_iso,
            f"{'f/i s/f':>8} {'f/i proj':>9} {'feeTVL proj':>12}")
     print("\n" + hdr)
     print("-" * len(hdr))
-    rows = []
-    for pool in pools:
-        m = compute_metrics(pool["pool_address"], epoch_pools, campaigns,
-                            epoch_start_iso, epoch_end_iso, hydx_price)
-        pair = pool.get("pair") or m.get("title") or pool["pool_address"][:10]
-        fi_sf = m["fees_per_incentive_usd"]
-        rows.append((pair, m, fi_sf, fi_sf / frac if frac > 0 else fi_sf,
-                     m["fees_tvl_pct"] / frac if frac > 0 else m["fees_tvl_pct"]))
-    for pair, m, fi_sf, fi_proj, feetvl_proj in sorted(rows, key=lambda x: -x[3]):
-        print(f"{pair[:16]:16} {m['tvl_end_usd']:>10,.0f} {m['fees_usd']:>9,.0f} "
-              f"{m['incentives_usd']:>10,.0f} {fi_sf:>8.2f} {fi_proj:>9.2f} {feetvl_proj:>10.2f}%")
+    for r in p["rows"]:
+        print(f"{r['pair'][:16]:16} {r['tvl_now']:>10,.0f} {r['fees_sofar']:>9,.0f} "
+              f"{r['incentive']:>10,.0f} {r['fi_sofar']:>8.2f} {r['fi_proj']:>9.2f} "
+              f"{r['feetvl_proj']:>10.2f}%")
     print("-" * len(hdr))
     print("(read-only — tracker not modified)")
+
+
+def render_live_html(epoch, epoch_start, epoch_end, preview, out_path=LIVE_HTML):
+    """Write live.html — the current-epoch snapshot for the public dashboard."""
+    frac = preview["elapsed_frac"]
+    rows = preview["rows"]
+    total_tvl = sum(r["tvl_now"] for r in rows)
+    total_fees = sum(r["fees_sofar"] for r in rows)
+    on_track = sum(1 for r in rows if r["fi_proj"] >= 1)
+
+    if preview["closed"]:
+        status = "epoch closed — figures are final"
+    else:
+        status = (f"{preview['days_elapsed']:.1f} of {preview['total_days']:.0f} days "
+                  f"elapsed ({frac:.0%})")
+
+    def cls(fi):
+        return ("#3fb950", "on track") if fi >= 1 else \
+               ("#d29922", "behind") if fi >= 0.6 else ("#f85149", "lagging")
+
+    trs = []
+    for r in rows:
+        col, label = cls(r["fi_proj"])
+        trs.append(
+            f"<tr><td><b>{r['pair']}</b></td>"
+            f"<td class=num>${r['tvl_now']:,.0f}</td>"
+            f"<td class=num>${r['fees_sofar']:,.0f}</td>"
+            f"<td class=num>${r['incentive']:,.0f}</td>"
+            f"<td class=num>{r['fi_sofar']:.2f}</td>"
+            f"<td class=num><b style=\"color:{col}\">{r['fi_proj']:.2f}</b></td>"
+            f"<td class=num>{r['feetvl_proj']:.2f}%</td>"
+            f"<td><span class=badge style=\"background:{col}\">{label}</span></td></tr>"
+        )
+
+    html = f"""<!DOCTYPE html><html lang=en><head><meta charset=UTF-8>
+<title>Hydrex Bootstrap — Live (Epoch {epoch})</title><style>
+:root{{--bg:#0d1117;--panel:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--green:#3fb950}}
+body{{margin:0;padding:24px;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}}
+h1{{margin:0 0 4px;font-size:20px}} .sub{{color:var(--muted);font-size:13px;margin-bottom:6px}}
+.warn{{color:#d29922;font-size:12px;margin-bottom:18px}}
+.summary{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}}
+.card{{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px}}
+.card-label{{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}}
+.card-value{{font-size:22px;font-weight:600}}
+table{{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden}}
+th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);font-size:13px}}
+th{{background:rgba(255,255,255,.03);color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.5px}}
+td.num,th.num{{text-align:right;font-variant-numeric:tabular-nums}} tr:last-child td{{border-bottom:none}}
+.badge{{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;color:#0d1117}}
+a.nav{{color:var(--accent);text-decoration:none;padding:6px 12px;border:1px solid var(--border);border-radius:6px;margin-right:8px}}
+a.nav.active{{background:var(--accent);color:var(--bg);border-color:var(--accent)}}
+.foot{{margin-top:18px;color:var(--muted);font-size:11px}}
+</style></head><body>
+<h1>Hydrex Bootstrap — Live · Epoch {epoch}</h1>
+<div class=sub>{epoch_start} → {epoch_end} · {status}</div>
+<div class=warn>⚠ Mid-epoch: fees so-far understate vs the full-epoch incentive. <b>f/i proj</b> pro-rates fees by 1/{frac:.2f} (assumes linear accrual); break-even = 1.0. TVL is live.</div>
+<div style="margin-bottom:18px">
+  <a class=nav href="index.html">Aero vs Hydrex</a>
+  <a class=nav href="picks.html">Selection</a>
+  <a class=nav href="retention.html">Retention</a>
+  <a class=nav href="bootstrap.html">Bootstrap</a>
+  <a class=nav active href="live.html">Live</a>
+</div>
+<div class=summary>
+  <div class=card><div class=card-label>Epoch</div><div class=card-value>{epoch}</div></div>
+  <div class=card><div class=card-label>Elapsed</div><div class=card-value>{frac:.0%}</div></div>
+  <div class=card><div class=card-label>TVL now</div><div class=card-value>${total_tvl:,.0f}</div></div>
+  <div class=card><div class=card-label>On track (f/i proj ≥ 1)</div><div class=card-value>{on_track}/{len(rows)}</div></div>
+</div>
+<table><thead><tr>
+  <th>Pair</th><th class=num>TVL now</th><th class=num>Fees so-far</th><th class=num>Incentive</th>
+  <th class=num>f/i so-far</th><th class=num>f/i proj</th><th class=num>fee/TVL proj</th><th>Status</th>
+</tr></thead><tbody>{''.join(trs)}</tbody></table>
+<div class=foot>Total fees so-far: ${total_fees:,.0f} · sorted by projected f/i. Source: Hydrex epoch + incentives APIs.</div>
+</body></html>"""
+    out_path.write_text(html)
 
 
 def main():
@@ -640,6 +740,11 @@ def main():
         "--preview", action="store_true",
         help="Read-only mid-epoch snapshot: print live metrics WITHOUT writing the tracker "
              "or dashboard. Fees/f-i are partial; a pro-rated projection is also shown.",
+    )
+    ap.add_argument(
+        "--live", action="store_true",
+        help="Read-only: write live.html (current-epoch snapshot for the public dashboard). "
+             "Does not touch the tracker.",
     )
     args = ap.parse_args()
 
@@ -659,13 +764,15 @@ def main():
     epoch_end = week["epoch_end"] + "T00:00:00Z"
     pools = week.get("pools", [])
 
-    mode = "PREVIEW (read-only, partial)" if args.preview else "update"
+    read_only = args.preview or args.live
+    mode = "PREVIEW (read-only, partial)" if args.preview else \
+        "LIVE html (read-only)" if args.live else "update"
     print(f"Bootstrap {mode}: Hydrex epoch {hydrex_epoch} ({week['epoch_start']} → {week['epoch_end']})")
     print(f"Pools: {len(pools)}")
 
     # Clear any zero-stub rows from earlier botched runs of this epoch.
-    # Skipped in preview — preview must never mutate the tracker.
-    if not args.preview:
+    # Skipped in read-only modes — they must never mutate the tracker.
+    if not read_only:
         purged = purge_stub_rows_for_epoch(hydrex_epoch)
         if purged:
             print(f"Purged {purged} stub row(s) for epoch {hydrex_epoch} — will re-record with real data")
@@ -681,6 +788,12 @@ def main():
 
     if args.preview:
         preview_epoch(pools, epoch_pools, campaigns, epoch_start, epoch_end, hydx_price)
+        return
+
+    if args.live:
+        preview = compute_preview(pools, epoch_pools, campaigns, epoch_start, epoch_end, hydx_price)
+        render_live_html(hydrex_epoch, week["epoch_start"], week["epoch_end"], preview)
+        print(f"Live dashboard written: {LIVE_HTML}")
         return
 
     rows_added = []
