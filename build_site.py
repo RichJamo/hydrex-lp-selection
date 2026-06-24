@@ -9,6 +9,7 @@ canonical tracker — any files it regenerates live only inside the deployed
 artifact, so frequent refreshes never touch git history.
 """
 import datetime as dt
+import re
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,45 @@ SITE = ROOT / "_site"
 PAGES = ["index.html", "live.html", "picks.html", "retention.html", "bootstrap.html", "hydrex_pools.html"]
 
 STAMP = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+# --- Canonical navigation -----------------------------------------------------
+# One nav bar for the whole site. Each page's own (inconsistent) nav is stripped
+# and replaced with this, so tabs/names/order/position are identical everywhere.
+NAV_TABS = [
+    ("index.html", "Aero vs Hydrex"),
+    ("live.html", "⟳ Live"),
+    ("picks.html", "Selection"),
+    ("retention.html", "Retention"),
+    ("bootstrap.html", "Bootstrap"),
+    ("hydrex_pools.html", "Hydrex Daily"),
+]
+
+# Existing nav wrappers to remove (first match only): the generated dashboards +
+# index use this inline-styled div; hydrex_pools uses .topbar-meta.
+_NAV_STRIP = [
+    re.compile(r'<div style="margin-bottom:18px">.*?</div>', re.S),
+    re.compile(r'<div class="topbar-meta">.*?</div>', re.S),
+]
+
+
+def canonical_nav(active: str) -> str:
+    base = ("color:#58a6ff;text-decoration:none;padding:6px 12px;border:1px solid #30363d;"
+            "border-radius:6px;margin-right:8px;display:inline-block;"
+            "font:600 13px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif")
+    act = ";background:#58a6ff;color:#0d1117;border-color:#58a6ff"
+    links = "".join(
+        f'<a href="{href}" style="{base}{act if href == active else ""}">{label}</a>'
+        for href, label in NAV_TABS
+    )
+    return f'<div style="padding:14px 0 18px;line-height:2.4">{links}</div>'
+
+
+def normalize_nav(html: str, active: str) -> str:
+    """Strip the page's own nav and inject the canonical one right after <body>."""
+    for pat in _NAV_STRIP:
+        html = pat.sub("", html, count=1)
+    return re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + "\n" + canonical_nav(active),
+                  html, count=1)
 
 
 def stamp_badge(html: str) -> str:
@@ -64,7 +104,7 @@ def main():
     for name in PAGES:
         src = ROOT / name
         if src.exists():
-            (SITE / name).write_text(stamp_badge(src.read_text()))
+            (SITE / name).write_text(stamp_badge(normalize_nav(src.read_text(), name)))
             published.append(name)
 
     # index.html fetches data/aero_vs_hydrex_combined.csv at runtime, and pages link
