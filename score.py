@@ -25,6 +25,7 @@ CONFIG = json.loads((SCRIPT_DIR / "selection_config.json").read_text())
 ENRICHED_CSV  = SCRIPT_DIR / "data" / "candidates_enriched.csv"
 PROXY_CSV     = SCRIPT_DIR / "data" / "aerodrome_proxy.csv"
 PICKS_CSV     = SCRIPT_DIR / "data" / "weekly_picks.csv"
+PICKS_HTML    = SCRIPT_DIR / "picks.html"
 BOOTSTRAP_JSON = SCRIPT_DIR / "bootstrap_picks.json"
 
 S = CONFIG["scoring"]
@@ -336,6 +337,76 @@ def emit_picks(ranked: list):
               f"{', '.join(r['pair'] for r in already_exists[:5])}"
               f"{'...' if len(already_exists) > 5 else ''})")
     print(f"\nWrote {PICKS_CSV}")
+
+    render_picks_html(picks, new_candidates, len(already_exists))
+    print(f"Wrote {PICKS_HTML}")
+
+
+def render_picks_html(picks: list, ranked_new: list, already_count: int, top: int = 20):
+    """Write picks.html — the selection dashboard ranking new-pool candidates."""
+    pick_addrs = {r.get("pair_address") for r in picks}
+    scan_date = next((r.get("date") for r in (picks + ranked_new) if r.get("date")),
+                     dt.date.today().isoformat())
+
+    def status(r):
+        if r.get("pair_address") in pick_addrs:
+            return "#3fb950", "PICK"
+        if not r.get("fee_tier_bps"):
+            return "#bc8cff", "no tier"
+        if r.get("lp_exit_signal") in (True, "True"):
+            return "#f85149", "LP exit"
+        return "#8b949e", "candidate"
+
+    trs = []
+    for i, r in enumerate(ranked_new[:top], 1):
+        col, label = status(r)
+        hl = ' style="border-left:3px solid #3fb950"' if r.get("pair_address") in pick_addrs else ""
+        fee_tvl = _f(r.get("_fees_per_tvl_ratio")) * 100  # daily fees / liquidity, as %
+        tier = r.get("fee_tier_bps") or "–"
+        age = r.get("pool_age_days") or "–"
+        trs.append(
+            f"<tr{hl}><td class=num>{i}</td>"
+            f"<td><b>{r.get('pair','?')}</b></td>"
+            f"<td>{r.get('dex','?')}</td>"
+            f"<td class=num><b>{_f(r.get('score')):.3f}</b></td>"
+            f"<td class=num>{fee_tvl:.2f}%</td>"
+            f"<td class=num>${_f(r.get('est_fees_24h_usd')):,.0f}</td>"
+            f"<td class=num>${_f(r.get('liquidity_usd')):,.0f}</td>"
+            f"<td class=num>{tier}{'bps' if tier != '–' else ''}</td>"
+            f"<td class=num>{age}</td>"
+            f"<td><span class=badge style=\"background:{col}\">{label}</span></td></tr>"
+        )
+
+    html = f"""<!DOCTYPE html><html lang=en><head><meta charset=UTF-8>
+<title>Hydrex — Selection (New Pool Candidates)</title><style>
+:root{{--bg:#0d1117;--panel:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--accent:#58a6ff}}
+body{{margin:0;padding:24px;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}}
+h1{{margin:0 0 4px;font-size:20px}} .sub{{color:var(--muted);font-size:13px;margin-bottom:18px}}
+table{{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden}}
+th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);font-size:13px}}
+th{{background:rgba(255,255,255,.03);color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.5px}}
+td.num,th.num{{text-align:right;font-variant-numeric:tabular-nums}} tr:last-child td{{border-bottom:none}}
+.badge{{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;color:#0d1117}}
+a.nav{{color:var(--accent);text-decoration:none;padding:6px 12px;border:1px solid var(--border);border-radius:6px;margin-right:8px}}
+a.nav.active{{background:var(--accent);color:var(--bg);border-color:var(--accent)}}
+.foot{{margin-top:18px;color:var(--muted);font-size:11px}}
+</style></head><body>
+<h1>Hydrex — Selection · New Pool Candidates</h1>
+<div class=sub>Scanned {scan_date} · ranked by weighted score (fee/TVL-dominant) · <b style="color:#3fb950">green bar</b> = top picks · {already_count} pairs skipped (already on Hydrex).</div>
+<div style="margin-bottom:18px">
+  <a class=nav href="index.html">Aero vs Hydrex</a>
+  <a class=nav href="live.html">Live</a>
+  <a class=nav active href="picks.html">Selection</a>
+  <a class=nav href="retention.html">Retention</a>
+  <a class=nav href="bootstrap.html">Bootstrap</a>
+</div>
+<table><thead><tr>
+  <th class=num>#</th><th>Pair</th><th>DEX</th><th class=num>Score</th><th class=num>Fee/TVL/day</th>
+  <th class=num>Est fees 24h</th><th class=num>Liquidity</th><th class=num>Fee tier</th><th class=num>Age (d)</th><th>Status</th>
+</tr></thead><tbody>{''.join(trs)}</tbody></table>
+<div class=foot>Score = transparent weighted blend (selection_config.json → scoring.weights). Fee/TVL/day = est. daily fees ÷ liquidity. Pre-Hydrex pools are external (Aerodrome/Uniswap) — bootstrap target is the Hydrex pool.</div>
+</body></html>"""
+    PICKS_HTML.write_text(html)
 
 
 def feature_importance():
