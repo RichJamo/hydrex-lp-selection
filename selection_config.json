@@ -104,7 +104,9 @@
     "_major_tokens_note": "Tokens considered 'blue chip' for pair_type_score. Pairs with 2 majors score 1.0, 1 major 0.7, 0 majors 0.3.",
     "primary_lp_share_note": "share = our_planned_tvl / (competitor_primary_lp_usd + our_planned_tvl). HOME was profitable because its primary LP was only ~$70k, so a $3k add was a meaningful share.",
     "planned_seed_tvl_usd": 3000,
-    "top_n_picks": 4
+    "top_n_picks": 4,
+    "min_pick_score": 0.35,
+    "_min_pick_score_note": "A candidate is only badged PICK if its weighted score clears this floor (and is in top_n_picks). Stops the dashboard recommending weak fillers below the natural score cliff — e.g. 2026-06-24 scores were 0.58, 0.57, then 0.22, 0.21; only the top two are real."
   },
 
   "hydrex_subgraph": {

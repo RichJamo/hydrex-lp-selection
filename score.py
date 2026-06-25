@@ -26,6 +26,7 @@ ENRICHED_CSV  = SCRIPT_DIR / "data" / "candidates_enriched.csv"
 PROXY_CSV     = SCRIPT_DIR / "data" / "aerodrome_proxy.csv"
 PICKS_CSV     = SCRIPT_DIR / "data" / "weekly_picks.csv"
 PICKS_HTML    = SCRIPT_DIR / "picks.html"
+RETENTION_CSV = SCRIPT_DIR / "data" / "retention_scorecard.csv"
 BOOTSTRAP_JSON = SCRIPT_DIR / "bootstrap_picks.json"
 
 S = CONFIG["scoring"]
@@ -224,9 +225,32 @@ def _existing_hydrex_pairs() -> set:
     return pairs
 
 
+def _failed_tokens() -> set:
+    """Non-major tokens whose Hydrex pool went CUT/DEAD in the retention scorecard.
+
+    These have burned us before (e.g. cbMEGA: ran 5 epochs, f/i never cleared 0.24).
+    Mercenary liquidity follows the token, not the quote asset, so we exclude the
+    token from picks regardless of which base it's now paired with. Still shown in
+    the table, flagged — just never recommended.
+    """
+    if not RETENTION_CSV.exists():
+        return set()
+    majors = {t.upper() for t in S.get("major_tokens", [])}
+    failed = set()
+    with open(RETENTION_CSV, newline="") as f:
+        for r in csv.DictReader(f):
+            if (r.get("recommendation") or "").upper() in ("CUT", "DEAD"):
+                for t in (r.get("pair") or "").split("/"):
+                    tu = t.strip().upper()
+                    if tu and tu not in majors:
+                        failed.add(tu)
+    return failed
+
+
 def emit_picks(ranked: list):
     existing = _existing_hydrex_pairs()
     n = S["top_n_picks"]
+    min_pick = S.get("min_pick_score", 0.0)
 
     # Deduplicate by token pair. When the same pair exists on multiple DEXes,
     # prefer Aerodrome 7-day data (epoch-aligned, our ground-truth proxy) over
@@ -247,11 +271,13 @@ def emit_picks(ranked: list):
     ranked = sorted(pair_best.values(), key=lambda r: r["score"], reverse=True)
 
     excluded_tokens = {t.upper() for t in CONFIG["candidate_filters"].get("exclude_tokens", [])}
+    failed_tokens = _failed_tokens()
 
     # Separate candidates into new (eligible) and already-on-Hydrex or excluded
     new_candidates, already_exists = [], []
     for r in ranked:
         tokens = frozenset(t.upper().strip() for t in r.get("pair", "/").split("/"))
+        r["_prior_fail"] = bool(tokens & failed_tokens)
         if tokens & excluded_tokens:
             continue
         if tokens in existing:
@@ -259,13 +285,17 @@ def emit_picks(ranked: list):
         else:
             new_candidates.append(r)
 
+    # A PICK must be top-n by score, clear the quality floor, have a readable fee
+    # tier, not be flagged for LP exit, and not be a token that failed before.
     picks, lp_exit_flagged, no_fee_tier = [], [], []
     for r in new_candidates:
         if not r.get("fee_tier_bps"):
             no_fee_tier.append(r)
         elif r.get("lp_exit_signal") in (True, "True"):
             lp_exit_flagged.append(r)
-        elif len(picks) < n:
+        elif r.get("_prior_fail"):
+            continue  # burned us before — shown flagged, never recommended
+        elif len(picks) < n and _f(r.get("score")) >= min_pick:
             picks.append(r)
 
     def _is_dynamic_snapshot(r) -> bool:
@@ -307,7 +337,8 @@ def emit_picks(ranked: list):
                 f"tier={fee_tier}bps  est_fees_24h=${r.get('est_fees_24h_usd','?')}  "
                 f"liq=${_f(r['liquidity_usd']):,.0f}  data={data_window}  age={r.get('pool_age_days','?')}d")
 
-    print(f"\n=== Suggested {n} NEW pools to create — {dt.date.today().isoformat()} ===")
+    print(f"\n=== Suggested {len(picks)} NEW pool(s) to create — {dt.date.today().isoformat()} "
+          f"(top {n}, score ≥ {min_pick}, excl. prior fails) ===")
     for r in picks:
         print(_fmt_row(r))
         if _is_dynamic_snapshot(r):
@@ -342,13 +373,16 @@ def emit_picks(ranked: list):
     print(f"Wrote {PICKS_HTML}")
 
 
-def render_picks_html(picks: list, ranked_new: list, already_count: int, top: int = 20):
+def render_picks_html(picks: list, ranked_new: list, already_count: int):
     """Write picks.html — the selection dashboard ranking new-pool candidates."""
     pick_addrs = {r.get("pair_address") for r in picks}
     scan_date = next((r.get("date") for r in (picks + ranked_new) if r.get("date")),
                      dt.date.today().isoformat())
+    min_pick = S.get("min_pick_score", 0.0)
 
     def status(r):
+        if r.get("_prior_fail"):
+            return "#f85149", "prior-fail"
         if r.get("pair_address") in pick_addrs:
             return "#3fb950", "PICK"
         if not r.get("fee_tier_bps"):
@@ -358,7 +392,7 @@ def render_picks_html(picks: list, ranked_new: list, already_count: int, top: in
         return "#8b949e", "candidate"
 
     trs = []
-    for i, r in enumerate(ranked_new[:top], 1):
+    for i, r in enumerate(ranked_new, 1):
         col, label = status(r)
         hl = ' style="border-left:3px solid #3fb950"' if r.get("pair_address") in pick_addrs else ""
         fee_tvl = _f(r.get("_fees_per_tvl_ratio")) * 100  # daily fees / liquidity, as %
@@ -392,7 +426,7 @@ a.nav.active{{background:var(--accent);color:var(--bg);border-color:var(--accent
 .foot{{margin-top:18px;color:var(--muted);font-size:11px}}
 </style></head><body>
 <h1>Hydrex — Selection · New Pool Candidates</h1>
-<div class=sub>Scanned {scan_date} · ranked by weighted score (fee/TVL-dominant) · <b style="color:#3fb950">green bar</b> = top picks · {already_count} pairs skipped (already on Hydrex).</div>
+<div class=sub>Scanned {scan_date} · <b style="color:#3fb950">{len(picks)} PICK(s)</b> = top {S['top_n_picks']} above score {min_pick}, excluding tokens that went CUT/DEAD on Hydrex (<b style="color:#f85149">prior-fail</b>) · {already_count} pairs already on Hydrex (hidden).</div>
 <div style="margin-bottom:18px">
   <a class=nav href="index.html">Aero vs Hydrex</a>
   <a class=nav href="live.html">Live</a>
