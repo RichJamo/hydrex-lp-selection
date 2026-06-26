@@ -17,6 +17,7 @@ Run daily (GitHub Action). Network calls only work where outbound is allowed.
 import csv
 import datetime as dt
 import json
+import os
 import time
 from pathlib import Path
 
@@ -64,6 +65,41 @@ def _search(query: str) -> list:
     except Exception as e:
         print(f"    search '{query}' failed: {e}")
         return []
+
+
+def _subgraph_top_pool_ids(subgraph_id: str, api_key: str, n: int, min_vol: float) -> list:
+    """Top-N pool addresses by all-time volume from a Uniswap-v3-style subgraph
+    (Aerodrome CL / Uniswap v3). Systematic coverage of the chain's dominant DEXes,
+    versus DexScreener's trending/boost sample."""
+    url = f"https://gateway.thegraph.com/api/{api_key}/subgraphs/id/{subgraph_id}"
+    query = """query($n: Int!) {
+      pools(first: $n, orderBy: volumeUSD, orderDirection: desc) {
+        id volumeUSD totalValueLockedUSD
+      }
+    }"""
+    try:
+        r = requests.post(url, json={"query": query, "variables": {"n": n}}, timeout=30)
+        r.raise_for_status()
+        pools = (r.json().get("data") or {}).get("pools", []) or []
+        return [p["id"].lower() for p in pools if float(p.get("volumeUSD") or 0) >= min_vol]
+    except Exception as e:
+        print(f"    subgraph {subgraph_id[:8]}.. top-pools failed: {e}")
+        return []
+
+
+def _hydrate_pairs(addrs: list) -> list:
+    """Fetch full DexScreener pair objects for pool addresses (batched, 30/call) so
+    subgraph-discovered pools carry the same fields (mcap, txns, age) the filters need."""
+    out = []
+    for i in range(0, len(addrs), 30):
+        batch = ",".join(addrs[i:i + 30])
+        try:
+            data = _get(f"/latest/dex/pairs/{CHAIN}/{batch}")
+            out.extend((data.get("pairs") if isinstance(data, dict) else data) or [])
+        except Exception as e:
+            print(f"    hydrate batch failed: {e}")
+        time.sleep(0.2)
+    return out
 
 
 def discover_token_addresses() -> set:
@@ -127,6 +163,28 @@ def collect_pairs() -> dict:
             if p.get("chainId") == CHAIN:
                 pairs.setdefault(p["pairAddress"].lower(), ("token_pairs", p))
         time.sleep(0.15)
+
+    # 4) Subgraph top pools by volume (Aerodrome + Uniswap v3) -> hydrate via DexScreener.
+    #    Systematic coverage of the dominant Base DEXes, beyond DexScreener's sample.
+    if d.get("use_subgraph_pools"):
+        key = os.environ.get("THEGRAPH_API_KEY", "")
+        if not key:
+            print("  use_subgraph_pools set but THEGRAPH_API_KEY missing — skipping subgraph discovery")
+        else:
+            sg = CONFIG.get("subgraphs", {})
+            n = d.get("subgraph_pools_per_dex", 200)
+            min_vol = d.get("subgraph_min_volume_usd", 5000)
+            pool_ids = set()
+            for sid in filter(None, (sg.get("aerodrome_base"), sg.get("uniswap_v3_base"))):
+                got = _subgraph_top_pool_ids(sid, key, n, min_vol)
+                print(f"  subgraph {sid[:8]}..: {len(got)} pools (vol >= ${min_vol:,.0f})")
+                pool_ids.update(got)
+            fresh = [a for a in pool_ids if a not in pairs]
+            before = len(pairs)
+            for p in _hydrate_pairs(fresh):
+                if p.get("chainId") == CHAIN and p.get("pairAddress"):
+                    pairs.setdefault(p["pairAddress"].lower(), ("subgraph", p))
+            print(f"  subgraph discovery: {len(pool_ids)} top pools -> +{len(pairs) - before} new pairs")
 
     print(f"  collected {len(pairs)} unique Base pairs")
     return pairs

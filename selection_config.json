@@ -75,7 +75,11 @@
     "use_latest_token_profiles": true,
     "use_top_boosts": true,
     "seed_search_queries": ["WETH base", "USDC base", "cbBTC base"],
-    "seed_token_addresses": []
+    "seed_token_addresses": [],
+    "use_subgraph_pools": true,
+    "subgraph_pools_per_dex": 200,
+    "subgraph_min_volume_usd": 5000,
+    "_subgraph_pools_note": "Broaden discovery beyond DexScreener's trending/boost sample: pull the top-N pools by all-time volume from the Aerodrome + Uniswap v3 Base subgraphs (config.subgraphs), then hydrate via DexScreener so they carry mcap/age/txns for the filters. Requires THEGRAPH_API_KEY (env locally, repo secret in CI)."
   },
 
   "fee_enrich": {
