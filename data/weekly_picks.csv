@@ -1,1 +1,2 @@
 date,pair,pair_address,dex,lp_type,score,fee_tier_bps,est_fees_24h_usd,liquidity_usd,market_cap,pool_age_days,vol_24h,lp_exit_signal,note,score_breakdown
+2026-06-26,cbXRP/cbBTC,0x62916B911F2B64d0e3A3b72472D6f8C08c75DcAA,aerodrome,CL/V3,0.4054,20.0,1017.74,113816.13,95325197.0,,508869.71,False,,"{""est_fees_per_day_usd"": 0.0177, ""fees_per_tvl_ratio"": 0.2479, ""vol_tvl_24h"": 0.0, ""pair_type_score"": 0.04, ""low_tvl_perf"": 0.0737, ""newness_bonus"": 0.015, ""buy_sell_balance"": 0.0111}"
