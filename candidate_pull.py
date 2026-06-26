@@ -77,14 +77,23 @@ def _subgraph_top_pool_ids(subgraph_id: str, api_key: str, n: int, min_vol: floa
         id volumeUSD totalValueLockedUSD
       }
     }"""
-    try:
-        r = requests.post(url, json={"query": query, "variables": {"n": n}}, timeout=30)
-        r.raise_for_status()
-        pools = (r.json().get("data") or {}).get("pools", []) or []
-        return [p["id"].lower() for p in pools if float(p.get("volumeUSD") or 0) >= min_vol]
-    except Exception as e:
-        print(f"    subgraph {subgraph_id[:8]}.. top-pools failed: {e}")
-        return []
+    # Retry on the flaky Graph gateway; 45s timeout. Surface GraphQL "errors"
+    # (e.g. "bad indexers") rather than silently returning 0 — a retry sometimes
+    # lands on a healthy indexer.
+    for attempt in (1, 2):
+        try:
+            r = requests.post(url, json={"query": query, "variables": {"n": n}}, timeout=45)
+            r.raise_for_status()
+            body = r.json()
+            if body.get("errors"):
+                raise RuntimeError(str(body["errors"])[:160])
+            pools = (body.get("data") or {}).get("pools", []) or []
+            return [p["id"].lower() for p in pools if float(p.get("volumeUSD") or 0) >= min_vol]
+        except Exception as e:
+            if attempt == 2:
+                print(f"    subgraph {subgraph_id[:8]}.. top-pools failed: {e}")
+                return []
+            time.sleep(2)
 
 
 def _hydrate_pairs(addrs: list) -> list:
