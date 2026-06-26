@@ -25,7 +25,9 @@ jobs:
       - name: Install deps
         run: pip install requests web3
 
-      - name: Pull candidates (DexScreener)
+      - name: Pull candidates (DexScreener + subgraphs)
+        env:
+          THEGRAPH_API_KEY: ${{ secrets.THEGRAPH_API_KEY }}
         run: python candidate_pull.py
 
       - name: Enrich with on-chain fee tiers
