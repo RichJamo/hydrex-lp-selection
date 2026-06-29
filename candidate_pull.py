@@ -317,15 +317,18 @@ def main():
           f"(liq>=${F['min_liquidity_usd']:,}, mcap>=${F['min_market_cap_usd']:,})")
 
     OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not (OUT_CSV.exists() and OUT_CSV.stat().st_size > 0)
-    with open(OUT_CSV, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=FIELDS)
-        if write_header:
-            w.writeheader()
-        for r in rows:
-            w.writerow(r)
+    # Rewrite the whole daily log with the current FIELDS header so a schema change
+    # (e.g. a new column) auto-migrates older rows instead of misaligning an append.
+    prior = []
+    if OUT_CSV.exists() and OUT_CSV.stat().st_size > 0:
+        with open(OUT_CSV, newline="") as f:
+            prior = [{k: r.get(k, "") for k in FIELDS} for r in csv.DictReader(f)]
+    with open(OUT_CSV, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=FIELDS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(prior + rows)
 
-    print(f"Appended {len(rows)} rows to {OUT_CSV}")
+    print(f"Wrote {len(prior)} prior + {len(rows)} new rows to {OUT_CSV}")
     # Print the day's filtered shortlist, ranked by 24h volume, as a quick preview
     for r in sorted(passed, key=lambda x: x["vol_24h"], reverse=True)[:10]:
         print(f"  {r['pair']:<20} liq=${r['liquidity_usd']:>12,.0f}  "

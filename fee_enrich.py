@@ -416,9 +416,12 @@ def main():
             r["vol_7d_usd"] = r["fees_7d_usd"] = r["tvl_avg_7d_usd"] = r["data_days"] = ""
             r["seven_day_source"] = ""
 
-    fieldnames = list(out[0].keys())
+    # Union of keys across all rows (rows may differ if upstream schema shifted),
+    # excluding any stray None key from a misaligned CSV read. extrasaction="ignore"
+    # guards against rows carrying keys outside the header.
+    fieldnames = [k for k in dict.fromkeys(c for r in out for c in r) if k is not None]
     with open(OUT_CSV, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         w.writeheader()
         w.writerows(out)
     print(f"\nWrote {len(out)} enriched rows to {OUT_CSV}")
