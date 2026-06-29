@@ -381,6 +381,48 @@
           "pool_address": "0xe8C3C7f1f845bc17E6964D42D84B21F97b12FCC0"
         }
       ]
+    },
+    {
+      "hydrex_epoch": 41,
+      "aero_epoch": 148,
+      "epoch_start": "2026-06-25",
+      "epoch_end": "2026-07-02",
+      "report_date_utc": "2026-07-02T02:00:00Z",
+      "_source": "Carried forward from epoch 40 — all 8 confirmed still funded in ep41 (verified against the incentives campaigns API on 2026-06-29). Note: Hydrex now incentivizes ~119 pools program-wide this epoch; this list is our curated tracked subset, not the full program.",
+      "pools": [
+        {
+          "pair": "WETH/CHECK",
+          "pool_address": "0x567b69f72c0a2689c9be0cfba576af3caa896cb2"
+        },
+        {
+          "pair": "VELVET/WETH",
+          "pool_address": "0x77d190b97b20161345ac718c93f530e8a7a4800b"
+        },
+        {
+          "pair": "WETH/NOCK",
+          "pool_address": "0x467a8846e7b54eac5d4d1cb2fdc9b8752212ff0e"
+        },
+        {
+          "pair": "LFI/USDC",
+          "pool_address": "0x53ab4c60ff04b782f630a8685af95404f099aafd"
+        },
+        {
+          "pair": "AUKI/USDC",
+          "pool_address": "0x3c709ea8105174964a45ca913dc948f2b7477b66"
+        },
+        {
+          "pair": "DEGEN/USDC",
+          "pool_address": "0xd2dd277feeec88405db3741239b0a9a96d01692d"
+        },
+        {
+          "pair": "VVV/cbBTC",
+          "pool_address": "0xb651439c9b086c7b4399c623e54deebcb3905f17"
+        },
+        {
+          "pair": "cbADA/cbBTC",
+          "pool_address": "0xe8C3C7f1f845bc17E6964D42D84B21F97b12FCC0"
+        }
+      ]
     }
   ]
 }
