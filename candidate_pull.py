@@ -68,32 +68,38 @@ def _search(query: str) -> list:
 
 
 def _subgraph_top_pool_ids(subgraph_id: str, api_key: str, n: int, min_vol: float) -> list:
-    """Top-N pool addresses by all-time volume from a Uniswap-v3-style subgraph
-    (Aerodrome CL / Uniswap v3). Systematic coverage of the chain's dominant DEXes,
-    versus DexScreener's trending/boost sample."""
+    """Top-N pool addresses by all-time volume from a DEX subgraph.
+
+    Schema-agnostic: tries the Uniswap-v3-style `pools` schema (Aerodrome CL /
+    Uniswap v3 forks), then falls back to the Messari `liquidityPools` schema.
+    We only need the addresses — pools are hydrated via DexScreener afterwards.
+    Retries on the flaky Graph gateway and surfaces "errors" (e.g. "bad indexers")
+    rather than silently returning 0.
+    """
     url = f"https://gateway.thegraph.com/api/{api_key}/subgraphs/id/{subgraph_id}"
-    query = """query($n: Int!) {
-      pools(first: $n, orderBy: volumeUSD, orderDirection: desc) {
-        id volumeUSD totalValueLockedUSD
-      }
-    }"""
-    # Retry on the flaky Graph gateway; 45s timeout. Surface GraphQL "errors"
-    # (e.g. "bad indexers") rather than silently returning 0 — a retry sometimes
-    # lands on a healthy indexer.
-    for attempt in (1, 2):
-        try:
-            r = requests.post(url, json={"query": query, "variables": {"n": n}}, timeout=45)
-            r.raise_for_status()
-            body = r.json()
-            if body.get("errors"):
-                raise RuntimeError(str(body["errors"])[:160])
-            pools = (body.get("data") or {}).get("pools", []) or []
-            return [p["id"].lower() for p in pools if float(p.get("volumeUSD") or 0) >= min_vol]
-        except Exception as e:
-            if attempt == 2:
-                print(f"    subgraph {subgraph_id[:8]}.. top-pools failed: {e}")
-                return []
-            time.sleep(2)
+    # (entity, volume_field) variants, tried in order.
+    variants = [("pools", "volumeUSD"), ("liquidityPools", "cumulativeVolumeUSD")]
+    for entity, vol_field in variants:
+        query = ("query($n: Int!) { %s(first: $n, orderBy: %s, orderDirection: desc) "
+                 "{ id %s } }" % (entity, vol_field, vol_field))
+        for attempt in (1, 2):
+            try:
+                r = requests.post(url, json={"query": query, "variables": {"n": n}}, timeout=45)
+                r.raise_for_status()
+                body = r.json()
+                if body.get("errors"):
+                    msg = str(body["errors"])
+                    if "has no field" in msg:
+                        break  # wrong schema for this subgraph — try next variant
+                    raise RuntimeError(msg[:140])  # indexer/transient error — retry
+                items = (body.get("data") or {}).get(entity, []) or []
+                return [it["id"].lower() for it in items if float(it.get(vol_field) or 0) >= min_vol]
+            except Exception as e:
+                if attempt == 2:
+                    print(f"    subgraph {subgraph_id[:8]}.. ({entity}) failed: {e}")
+                else:
+                    time.sleep(2)
+    return []
 
 
 def _hydrate_pairs(addrs: list) -> list:
@@ -173,8 +179,8 @@ def collect_pairs() -> dict:
                 pairs.setdefault(p["pairAddress"].lower(), ("token_pairs", p))
         time.sleep(0.15)
 
-    # 4) Subgraph top pools by volume (Aerodrome + Uniswap v3) -> hydrate via DexScreener.
-    #    Systematic coverage of the dominant Base DEXes, beyond DexScreener's sample.
+    # 4) Subgraph top pools by volume -> hydrate via DexScreener. Systematic
+    #    coverage of the dominant Base DEXes, beyond DexScreener's sample.
     if d.get("use_subgraph_pools"):
         key = os.environ.get("THEGRAPH_API_KEY", "")
         if not key:
@@ -183,8 +189,9 @@ def collect_pairs() -> dict:
             sg = CONFIG.get("subgraphs", {})
             n = d.get("subgraph_pools_per_dex", 200)
             min_vol = d.get("subgraph_min_volume_usd", 5000)
+            ids = d.get("discovery_subgraph_ids") or [sg.get("aerodrome_base"), sg.get("uniswap_v3_base")]
             pool_ids = set()
-            for sid in filter(None, (sg.get("aerodrome_base"), sg.get("uniswap_v3_base"))):
+            for sid in filter(None, ids):
                 got = _subgraph_top_pool_ids(sid, key, n, min_vol)
                 print(f"  subgraph {sid[:8]}..: {len(got)} pools (vol >= ${min_vol:,.0f})")
                 pool_ids.update(got)

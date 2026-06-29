@@ -79,7 +79,12 @@
     "use_subgraph_pools": true,
     "subgraph_pools_per_dex": 200,
     "subgraph_min_volume_usd": 5000,
-    "_subgraph_pools_note": "Broaden discovery beyond DexScreener's trending/boost sample: pull the top-N pools by all-time volume from the Aerodrome + Uniswap v3 Base subgraphs (config.subgraphs), then hydrate via DexScreener so they carry mcap/age/txns for the filters. Requires THEGRAPH_API_KEY (env locally, repo secret in CI)."
+    "discovery_subgraph_ids": [
+      "GENunSHWLBXm59mBSgPzQ8metBEp9YDfdqwFr91Av1UM",
+      "FUbEPQw1oMghy39fwWBFY5fE6MXPXZQtjncQy2cXdrNS"
+    ],
+    "_discovery_subgraph_ids_note": "Subgraphs queried for top-pools-by-volume discovery (schema-agnostic: pools or Messari liquidityPools). [0]=Aerodrome CL (reliable), [1]=Uniswap v3 Base (Messari schema, healthy when its Graph indexers are up — replaces the dead HMuAwufq ID that fee_enrich still uses for 7d data). Separate from config.subgraphs so swapping a discovery source doesn't affect fee enrichment.",
+    "_subgraph_pools_note": "Broaden discovery beyond DexScreener's trending/boost sample: pull the top-N pools by all-time volume from discovery_subgraph_ids, then hydrate via DexScreener so they carry mcap/age/txns for the filters. Requires THEGRAPH_API_KEY (env locally, repo secret in CI)."
   },
 
   "fee_enrich": {
