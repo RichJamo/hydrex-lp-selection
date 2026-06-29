@@ -171,7 +171,17 @@ def score(rows: list) -> list:
         "newness_bonus":        "_newness_bonus",
         "buy_sell_balance":     "_buy_sell_balance",
     }
-    normed = {name: normalize([_f(r[key]) for r in rows]) for name, key in feats.items()}
+    # Winsorize before normalizing: clamp outlier features at config ceilings so a
+    # thin pool's inflated fee/TVL or a mega-pool's absolute fees can't blow out the
+    # min-max scale and suppress legitimate mid-size pools.
+    caps = S.get("feature_caps", {})
+    normed = {}
+    for name, key in feats.items():
+        vals = [_f(r[key]) for r in rows]
+        cap = caps.get(name)
+        if cap:
+            vals = [min(v, cap) for v in vals]
+        normed[name] = normalize(vals)
 
     for i, r in enumerate(rows):
         total, breakdown = 0.0, {}
@@ -251,6 +261,7 @@ def emit_picks(ranked: list):
     existing = _existing_hydrex_pairs()
     n = S["top_n_picks"]
     min_pick = S.get("min_pick_score", 0.0)
+    min_pick_liq = S.get("min_pick_liquidity_usd", 0.0)
 
     # Deduplicate by token pair. When the same pair exists on multiple DEXes,
     # prefer Aerodrome 7-day data (epoch-aligned, our ground-truth proxy) over
@@ -295,7 +306,8 @@ def emit_picks(ranked: list):
             lp_exit_flagged.append(r)
         elif r.get("_prior_fail"):
             continue  # burned us before — shown flagged, never recommended
-        elif len(picks) < n and _f(r.get("score")) >= min_pick:
+        elif (len(picks) < n and _f(r.get("score")) >= min_pick
+              and _f(r.get("liquidity_usd")) >= min_pick_liq):
             picks.append(r)
 
     def _is_dynamic_snapshot(r) -> bool:
@@ -379,6 +391,7 @@ def render_picks_html(picks: list, ranked_new: list, already_count: int):
     scan_date = next((r.get("date") for r in (picks + ranked_new) if r.get("date")),
                      dt.date.today().isoformat())
     min_pick = S.get("min_pick_score", 0.0)
+    min_pick_liq = S.get("min_pick_liquidity_usd", 0.0)
 
     def status(r):
         if r.get("_prior_fail"):
@@ -389,6 +402,8 @@ def render_picks_html(picks: list, ranked_new: list, already_count: int):
             return "#bc8cff", "no tier"
         if r.get("lp_exit_signal") in (True, "True"):
             return "#f85149", "LP exit"
+        if _f(r.get("score")) >= min_pick and _f(r.get("liquidity_usd")) < min_pick_liq:
+            return "#d29922", "thin"  # scored well but below the pick-liquidity floor
         return "#8b949e", "candidate"
 
     trs = []

@@ -120,7 +120,14 @@
     "planned_seed_tvl_usd": 3000,
     "top_n_picks": 4,
     "min_pick_score": 0.35,
-    "_min_pick_score_note": "A candidate is only badged PICK if its weighted score clears this floor (and is in top_n_picks). Stops the dashboard recommending weak fillers below the natural score cliff — e.g. 2026-06-24 scores were 0.58, 0.57, then 0.22, 0.21; only the top two are real."
+    "_min_pick_score_note": "A candidate is only badged PICK if its weighted score clears this floor (and is in top_n_picks). Stops the dashboard recommending weak fillers below the natural score cliff — e.g. 2026-06-24 scores were 0.58, 0.57, then 0.22, 0.21; only the top two are real.",
+    "min_pick_liquidity_usd": 15000,
+    "_min_pick_liquidity_note": "A candidate must have at least this much liquidity to be badged PICK (still shown as a candidate below it). Stops thin pools — esp. inverse-connector pairs like a $2k VIRTUAL/USDC whose tiny TVL inflates fee/TVL — from being auto-recommended. The connector insight stays visible as decision-support; a human decides on the thin ones.",
+    "feature_caps": {
+      "fees_per_tvl_ratio": 0.006,
+      "est_fees_per_day_usd": 3000
+    },
+    "_feature_caps_note": "Winsorize before min-max normalizing: clamp these raw features at sane ceilings so a thin pool's fee/TVL spike (e.g. a $2k pool at 1.7%/day) or a mega-pool's absolute fees ($90M pool) can't blow out the scale and suppress legitimate mid-size pools (which made REI/WETH's score swing 0.36->0.18 just from what else got discovered). fees_per_tvl_ratio is daily fees/liquidity (0.006 = 0.6%/day); est_fees_per_day_usd is daily USD."
   },
 
   "hydrex_subgraph": {
