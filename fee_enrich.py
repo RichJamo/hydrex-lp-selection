@@ -289,8 +289,14 @@ def main():
         avg_mc  = sum(mc_vals)   / len(mc_vals)   if mc_vals   else 0
         days_seen = len(set(r["date"] for r in addr_rows))
 
+        # Inverse-connector pairs intentionally sit below the standard liquidity
+        # floor (that's the point) — apply the same relaxed floor candidate_pull used.
+        is_connector = any(str(r.get("inverse_connector", "")).lower() == "true" for r in addr_rows)
+        liq_floor = (float(FILTER_CFG.get("inverse_connector_min_liquidity_usd", 2000))
+                     if is_connector else MIN_LIQ)
+
         # Filter on rolling averages, not today's single snapshot
-        if avg_liq < MIN_LIQ or avg_mc < MIN_MC:
+        if avg_liq < liq_floor or avg_mc < MIN_MC:
             continue
 
         # Representative row: today's if available, else most recent
