@@ -398,9 +398,12 @@ def render_picks_html(picks: list, ranked_new: list, already_count: int):
         fee_tvl = _f(r.get("_fees_per_tvl_ratio")) * 100  # daily fees / liquidity, as %
         tier = r.get("fee_tier_bps") or "–"
         age = r.get("pool_age_days") or "–"
+        ic = (' <span style="color:#58a6ff;font-size:10px;border:1px solid #58a6ff;'
+              'border-radius:8px;padding:0 5px">⮂ connector</span>'
+              if r.get("inverse_connector") in (True, "True") else "")
         trs.append(
             f"<tr{hl}><td class=num>{i}</td>"
-            f"<td><b>{r.get('pair','?')}</b></td>"
+            f"<td><b>{r.get('pair','?')}</b>{ic}</td>"
             f"<td>{r.get('dex','?')}</td>"
             f"<td class=num><b>{_f(r.get('score')):.3f}</b></td>"
             f"<td class=num>{fee_tvl:.2f}%</td>"

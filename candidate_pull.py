@@ -39,7 +39,7 @@ FIELDS = [
     "txns_24h_buys", "txns_24h_sells",
     "price_change_24h", "pair_created_at", "pool_age_days",
     "vol_tvl_24h", "buy_sell_ratio_24h", "labels",
-    "passed_filter", "discovery_source",
+    "passed_filter", "discovery_source", "inverse_connector",
 ]
 
 
@@ -202,6 +202,44 @@ def collect_pairs() -> dict:
                     pairs.setdefault(p["pairAddress"].lower(), ("subgraph", p))
             print(f"  subgraph discovery: {len(pool_ids)} top pools -> +{len(pairs) - before} new pairs")
 
+    # 5) Inverse-connector: for each token with a deep pool passing the standard
+    #    filter, pull its pools and admit the opposite-base (USDC/WETH/cbBTC) variant
+    #    even when thin — often more capital-efficient (high fee/TVL) but dropped by
+    #    the $50k floor. Austin's heuristic; catches DEGEN/USDC-style pairs.
+    if F.get("inverse_connector_enabled"):
+        bases = {b.upper() for b in F.get("inverse_connector_bases", ["USDC", "WETH", "cbBTC"])}
+        cmin = F.get("inverse_connector_min_liquidity_usd", 2000)
+        std = F["min_liquidity_usd"]
+        # Anchor = each qualifying NON-base token's deepest pool + its quote base.
+        # (Base tokens like WETH/USDC/cbBTC are connectors, not assets we bootstrap.)
+        anchor = {}
+        for _src, p in list(pairs.values()):
+            liq = _f((p.get("liquidity") or {}).get("usd"))
+            if liq < std or _f(p.get("marketCap")) < F["min_market_cap_usd"]:
+                continue
+            bt = p.get("baseToken") or {}
+            a = (bt.get("address") or "").lower()
+            if not a or (bt.get("symbol") or "").upper() in bases:
+                continue
+            q = ((p.get("quoteToken") or {}).get("symbol") or "").upper()
+            if a not in anchor or liq > anchor[a][0]:
+                anchor[a] = (liq, q)
+        top_tokens = [a for a, _ in sorted(anchor.items(), key=lambda x: -x[1][0])][
+            : F.get("inverse_connector_max_tokens", 40)]
+        before = len(pairs)
+        for addr in top_tokens:
+            anchor_q = anchor[addr][1]
+            for p in _pairs_for_token(addr):
+                pa = (p.get("pairAddress") or "").lower()
+                q = ((p.get("quoteToken") or {}).get("symbol") or "").upper()
+                liq = _f((p.get("liquidity") or {}).get("usd"))
+                # the OPPOSITE base, and only the THIN ones the $50k floor would drop
+                if (p.get("chainId") == CHAIN and pa and pa not in pairs
+                        and q in bases and q != anchor_q and cmin <= liq < std):
+                    pairs[pa] = ("inverse_connector", p)
+            time.sleep(0.15)
+        print(f"  inverse-connector: scanned {len(top_tokens)} tokens -> +{len(pairs) - before} thin connector pairs")
+
     print(f"  collected {len(pairs)} unique Base pairs")
     return pairs
 
@@ -228,7 +266,13 @@ def build_row(source: str, p: dict, today: str) -> dict:
         created = dt.datetime.fromtimestamp(created_ms / 1000, tz=dt.timezone.utc)
         age_days = round((dt.datetime.now(dt.timezone.utc) - created).total_seconds() / 86400, 2)
 
-    passed = liq >= F["min_liquidity_usd"] and mcap >= F["min_market_cap_usd"]
+    # Inverse-connector pairs (the thin opposite-base variant of a qualifying token)
+    # use a relaxed liquidity floor — that's the whole point, they're efficient but
+    # below $50k. The market-cap requirement still applies.
+    is_connector = source == "inverse_connector"
+    liq_floor = (F.get("inverse_connector_min_liquidity_usd", 2000)
+                 if is_connector else F["min_liquidity_usd"])
+    passed = liq >= liq_floor and mcap >= F["min_market_cap_usd"]
     quote_sym = (p.get("quoteToken") or {}).get("symbol", "")
     if quote_sym in F.get("exclude_quote_symbols", []):
         passed = False
@@ -259,6 +303,7 @@ def build_row(source: str, p: dict, today: str) -> dict:
         "labels": "|".join(p.get("labels") or []),
         "passed_filter": passed,
         "discovery_source": source,
+        "inverse_connector": is_connector,
     }
 
 

@@ -66,7 +66,12 @@
     "_max_vol_tvl_24h_note": "Exclude pools where 24h volume > 5× liquidity. Extreme vol/TVL (e.g. 10×) signals LP flight or thin liquidity, not genuine trading demand.",
     "lp_exit_liquidity_drop": 0.5,
     "_lp_exit_note": "Flag (but don't exclude from ranking) pools where today's liquidity < 50% of their 7d rolling average. Signals LP exit rather than noise; flagged pools are shown in top-20 but skipped for top-4 picks.",
-    "max_pool_age_days_for_new_bucket": 21
+    "max_pool_age_days_for_new_bucket": 21,
+    "inverse_connector_enabled": true,
+    "inverse_connector_bases": ["USDC", "WETH", "cbBTC"],
+    "inverse_connector_min_liquidity_usd": 2000,
+    "inverse_connector_max_tokens": 40,
+    "_inverse_connector_note": "Austin's heuristic (Jun 2026): the opposite-base pair of a token's deepest pool is often far more capital-efficient. For each token whose deepest pool clears the standard filter, also admit its USDC/WETH/cbBTC pools above this RELAXED liquidity floor (mcap filter still applies), flagged inverse_connector. Recovers DEGEN/USDC-style thin-but-efficient pairs the $50k floor drops; capped at max_tokens to bound API calls."
   },
 
   "discovery": {
