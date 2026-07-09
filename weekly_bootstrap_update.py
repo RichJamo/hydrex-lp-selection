@@ -590,6 +590,40 @@ def select_week_by_epoch(weeks: list, hydrex_epoch: int) -> dict:
     )
 
 
+def ensure_current_epoch(picks_file=PICKS_FILE) -> list:
+    """Append the current epoch (and any skipped ones) to the picks file by carrying
+    the latest roster forward, so the live dashboard never goes stale. Runs weekly
+    at the epoch flip; a human then prunes/adds pools. Returns epochs added.
+    """
+    data = json.loads(picks_file.read_text())
+    weeks = data.get("weeks", [])
+    if not weeks:
+        return []
+    today = dt.datetime.now(dt.timezone.utc).date()
+    added = []
+    while True:
+        latest = max(weeks, key=lambda w: int(w["hydrex_epoch"]))
+        end = dt.date.fromisoformat(latest["epoch_end"])
+        if today < end:          # latest configured epoch is still current/future
+            break
+        ne = int(latest["hydrex_epoch"]) + 1
+        nend = end + dt.timedelta(days=7)
+        weeks.append({
+            "hydrex_epoch": ne,
+            "aero_epoch": ne + 107,
+            "epoch_start": end.isoformat(),
+            "epoch_end": nend.isoformat(),
+            "report_date_utc": nend.isoformat() + "T02:00:00Z",
+            "_source": f"Auto-carried forward from ep{latest['hydrex_epoch']} on "
+                       f"{today.isoformat()} — prune/add pools as needed.",
+            "pools": [dict(p) for p in latest.get("pools", [])],
+        })
+        added.append(ne)
+    if added:
+        picks_file.write_text(json.dumps(data, indent=2) + "\n")
+    return added
+
+
 def compute_preview(pools, epoch_pools, campaigns, epoch_start_iso, epoch_end_iso, hydx_price):
     """Mid-epoch snapshot data WITHOUT touching the tracker.
 
@@ -746,7 +780,17 @@ def main():
         help="Read-only: write live.html (current-epoch snapshot for the public dashboard). "
              "Does not touch the tracker.",
     )
+    ap.add_argument(
+        "--ensure-epoch", action="store_true",
+        help="Append the current epoch to bootstrap_picks.json (carry the latest roster "
+             "forward) so the live dashboard never goes stale. Run weekly at the epoch flip.",
+    )
     args = ap.parse_args()
+
+    if args.ensure_epoch:
+        added = ensure_current_epoch()
+        print(f"Ensured current epoch — added: {added}" if added else "Current epoch already configured — no change.")
+        return
 
     picks = json.loads(PICKS_FILE.read_text())
     weeks = picks.get("weeks", [])
