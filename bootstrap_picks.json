@@ -423,6 +423,40 @@
           "pool_address": "0xe8C3C7f1f845bc17E6964D42D84B21F97b12FCC0"
         }
       ]
+    },
+    {
+      "hydrex_epoch": 43,
+      "aero_epoch": 150,
+      "epoch_start": "2026-07-09",
+      "epoch_end": "2026-07-16",
+      "report_date_utc": "2026-07-16T02:00:00Z",
+      "_source": "Curated roster refreshed 2026-07-09: the keeps (NOCK, LFI, VELVET), the connector winners (REI/USDC, DEGEN/USDC), and the new CX/WETH. Dropped the dead weight (WETH/CHECK, AUKI, VVV/cbBTC, cbADA/cbBTC). Addresses taken from the ep43 Hydrex epoch-data API. Note: ep42 was not tracked (never configured), so those pools have no ep42 row.",
+      "pools": [
+        {
+          "pair": "REI/USDC",
+          "pool_address": "0x02b3df6178dd2f6b43ffa075c9477dd5bbf8fd10"
+        },
+        {
+          "pair": "WETH/NOCK",
+          "pool_address": "0x467a8846e7b54eac5d4d1cb2fdc9b8752212ff0e"
+        },
+        {
+          "pair": "VELVET/WETH",
+          "pool_address": "0x77d190b97b20161345ac718c93f530e8a7a4800b"
+        },
+        {
+          "pair": "DEGEN/USDC",
+          "pool_address": "0xd2dd277feeec88405db3741239b0a9a96d01692d"
+        },
+        {
+          "pair": "LFI/USDC",
+          "pool_address": "0x53ab4c60ff04b782f630a8685af95404f099aafd"
+        },
+        {
+          "pair": "CX/WETH",
+          "pool_address": "0xc83418f1acad06914455d931785aedadb1617def"
+        }
+      ]
     }
   ]
 }
