@@ -525,6 +525,40 @@
           "pool_address": "0xc83418f1acad06914455d931785aedadb1617def"
         }
       ]
+    },
+    {
+      "hydrex_epoch": 45,
+      "aero_epoch": 152,
+      "epoch_start": "2026-07-23",
+      "epoch_end": "2026-07-30",
+      "report_date_utc": "2026-07-30T02:00:00Z",
+      "_source": "Auto-carried forward from ep44 on 2026-07-23 \u2014 prune/add pools as needed.",
+      "pools": [
+        {
+          "pair": "REI/USDC",
+          "pool_address": "0x02b3df6178dd2f6b43ffa075c9477dd5bbf8fd10"
+        },
+        {
+          "pair": "WETH/NOCK",
+          "pool_address": "0x467a8846e7b54eac5d4d1cb2fdc9b8752212ff0e"
+        },
+        {
+          "pair": "VELVET/WETH",
+          "pool_address": "0x77d190b97b20161345ac718c93f530e8a7a4800b"
+        },
+        {
+          "pair": "DEGEN/USDC",
+          "pool_address": "0xd2dd277feeec88405db3741239b0a9a96d01692d"
+        },
+        {
+          "pair": "LFI/USDC",
+          "pool_address": "0x53ab4c60ff04b782f630a8685af95404f099aafd"
+        },
+        {
+          "pair": "CX/WETH",
+          "pool_address": "0xc83418f1acad06914455d931785aedadb1617def"
+        }
+      ]
     }
   ]
 }
