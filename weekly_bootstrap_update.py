@@ -30,21 +30,35 @@ LIVE_HTML = SCRIPT_DIR / "live.html"
 
 HYDREX_EPOCH_API = "https://staging.api.hydrex.fi/stats/clamm-pool-epoch-data"
 CAMPAIGNS_API = "https://incentives-api.hydrex.fi/campaigns"
-DEXSCREENER_SEARCH = "https://api.dexscreener.com/latest/dex/search"
+DEXSCREENER_TOKEN_PAIRS = "https://api.dexscreener.com/tokens/v1/base"
+# Canonical HYDX on Base. Look up by address, never by symbol: copycat "HYDX"
+# tokens exist on other chains, and DexScreener's text search ranking drifts.
+HYDX_ADDRESS = "0x00000e7efa313F4E11Bfff432471eD9423AC6B30"
 
 OHYDX_DISCOUNT = 0.7  # oHYDX price = HYDX * 0.7
 
 
 def get_hydx_price() -> float:
-    """Pull current HYDX price from DEXScreener."""
-    r = requests.get(f"{DEXSCREENER_SEARCH}?q=HYDX%20base", timeout=15)
+    """Pull current HYDX price from DEXScreener.
+
+    Postcondition: returns priceUsd > 0 from the highest-liquidity Base pair
+    whose base token address is HYDX_ADDRESS. Raises RuntimeError otherwise
+    (no fallback — a wrong price silently corrupts incentive USD).
+    """
+    r = requests.get(f"{DEXSCREENER_TOKEN_PAIRS}/{HYDX_ADDRESS}", timeout=15)
     r.raise_for_status()
-    for p in r.json().get("pairs", []):
-        if p.get("chainId") == "base" and p.get("baseToken", {}).get("symbol", "").upper() == "HYDX":
-            price = float(p.get("priceUsd") or 0)
-            if price > 0:
-                return price
-    raise RuntimeError("HYDX price not found on DEXScreener")
+    candidates = []
+    for p in r.json() or []:
+        base = p.get("baseToken") or {}
+        if p.get("chainId") != "base" or (base.get("address") or "").lower() != HYDX_ADDRESS.lower():
+            continue
+        price = float(p.get("priceUsd") or 0)
+        if price > 0:
+            liquidity = float((p.get("liquidity") or {}).get("usd") or 0)
+            candidates.append((liquidity, price))
+    if not candidates:
+        raise RuntimeError(f"HYDX price not found on DEXScreener for {HYDX_ADDRESS}")
+    return max(candidates)[1]
 
 
 def fetch_epoch_data(hydrex_epoch: int) -> dict:
