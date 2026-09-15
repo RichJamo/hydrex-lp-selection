@@ -1,0 +1,31 @@
+name: Tests
+
+# Runs the unit tests on every push and PR to main. Kept separate from the
+# Pages deploy so a red test is visible on its own and never blocks dashboards.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install --quiet requests
+
+      - name: Run unit tests
+        run: python -m unittest discover tests -v
