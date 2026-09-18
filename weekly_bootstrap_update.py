@@ -18,6 +18,7 @@ import csv
 import datetime as dt
 import json
 import sys
+import time
 from pathlib import Path
 
 import requests
@@ -36,6 +37,46 @@ DEXSCREENER_TOKEN_PAIRS = "https://api.dexscreener.com/tokens/v1/base"
 HYDX_ADDRESS = "0x00000e7efa313F4E11Bfff432471eD9423AC6B30"
 
 OHYDX_DISCOUNT = 0.7  # oHYDX price = HYDX * 0.7
+
+# Transient-failure retry for the Hydrex APIs (the stats API rate-limits the
+# 30-min Pages refresh occasionally). Only these statuses are retried.
+RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+MAX_HTTP_ATTEMPTS = 4
+RETRY_BASE_DELAY_SECONDS = 2.0   # waits 2s, 4s, 8s between attempts
+RETRY_MAX_DELAY_SECONDS = 30.0   # cap, including a server-sent Retry-After
+
+
+def _retry_delay_seconds(response: requests.Response, attempt: int) -> float:
+    """Seconds to wait before retry number `attempt` (1-based).
+
+    Honours a numeric Retry-After header; otherwise exponential backoff.
+    Always within [0, RETRY_MAX_DELAY_SECONDS].
+    """
+    retry_after = response.headers.get("Retry-After", "")
+    try:
+        delay = float(retry_after)
+    except ValueError:
+        delay = RETRY_BASE_DELAY_SECONDS * 2 ** (attempt - 1)
+    return min(max(delay, 0.0), RETRY_MAX_DELAY_SECONDS)
+
+
+def get_with_retry(url: str, timeout: float) -> requests.Response:
+    """GET `url`, retrying only on RETRYABLE_STATUS_CODES.
+
+    Postcondition: returns a response with a 2xx/3xx status. Raises
+    requests.HTTPError for a non-retryable error status, or for the last
+    retryable one once MAX_HTTP_ATTEMPTS are used up.
+    """
+    for attempt in range(1, MAX_HTTP_ATTEMPTS + 1):
+        r = requests.get(url, timeout=timeout)
+        if r.status_code not in RETRYABLE_STATUS_CODES or attempt == MAX_HTTP_ATTEMPTS:
+            r.raise_for_status()
+            return r
+        delay = _retry_delay_seconds(r, attempt)
+        print(f"  HTTP {r.status_code} from {url}; retry {attempt}/{MAX_HTTP_ATTEMPTS - 1} in {delay:.0f}s",
+              file=sys.stderr)
+        time.sleep(delay)
+    raise AssertionError("unreachable: loop always returns or raises")
 
 
 def get_hydx_price() -> float:
@@ -63,16 +104,14 @@ def get_hydx_price() -> float:
 
 def fetch_epoch_data(hydrex_epoch: int) -> dict:
     """Fetch the FULL epoch data once. Returns dict keyed by pool_address (lowercase)."""
-    r = requests.get(f"{HYDREX_EPOCH_API}/{hydrex_epoch}", timeout=60)
-    r.raise_for_status()
+    r = get_with_retry(f"{HYDREX_EPOCH_API}/{hydrex_epoch}", timeout=60)
     pools = r.json().get("pools", [])
     return {(p.get("poolAddress") or "").lower(): p for p in pools}
 
 
 def fetch_campaigns() -> list:
     """Fetch ALL campaigns once. Returns list."""
-    r = requests.get(CAMPAIGNS_API, timeout=60)
-    r.raise_for_status()
+    r = get_with_retry(CAMPAIGNS_API, timeout=60)
     return r.json().get("campaigns", [])
 
 
